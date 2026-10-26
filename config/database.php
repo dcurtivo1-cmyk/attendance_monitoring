@@ -29,6 +29,12 @@ function get_db_connection() {
             PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
             PDO::ATTR_EMULATE_PREPARES   => false,
         ];
+
+        // Enable SSL for remote cloud databases (e.g. TiDB Cloud, Aiven, Clever Cloud)
+        if (defined('PDO::MYSQL_ATTR_SSL_VERIFY_SERVER_CERT') && DB_HOST !== '127.0.0.1' && DB_HOST !== 'localhost') {
+            $options[PDO::MYSQL_ATTR_SSL_VERIFY_SERVER_CERT] = false;
+        }
+
         try {
             $pdo = new PDO($dsn, DB_USER, DB_PASS, $options);
             ensure_system_schema($pdo);
