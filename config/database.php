@@ -40,8 +40,14 @@ function get_db_connection() {
         ];
 
         // Enable SSL for remote cloud databases (e.g. TiDB Cloud, Aiven, Clever Cloud)
-        if (defined('PDO::MYSQL_ATTR_SSL_VERIFY_SERVER_CERT') && DB_HOST !== '127.0.0.1' && DB_HOST !== 'localhost') {
-            $options[PDO::MYSQL_ATTR_SSL_VERIFY_SERVER_CERT] = false;
+        if (DB_HOST !== '127.0.0.1' && DB_HOST !== 'localhost') {
+            $caFile = __DIR__ . '/ca.pem';
+            if (file_exists($caFile) && defined('PDO::MYSQL_ATTR_SSL_CA')) {
+                $options[PDO::MYSQL_ATTR_SSL_CA] = $caFile;
+            }
+            if (defined('PDO::MYSQL_ATTR_SSL_VERIFY_SERVER_CERT')) {
+                $options[PDO::MYSQL_ATTR_SSL_VERIFY_SERVER_CERT] = false;
+            }
         }
 
         try {
