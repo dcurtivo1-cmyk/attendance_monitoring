@@ -80,3 +80,4 @@ if (is_file($target)) {
 // 6. 404 Not Found fallback
 http_response_code(404);
 echo "404 Not Found: " . htmlspecialchars($uriPath);
+
