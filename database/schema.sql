@@ -3,8 +3,8 @@
 -- Student & Teacher Attendance Monitoring System Database Schema
 -- =========================================================================
 
-CREATE DATABASE IF NOT EXISTS `attendance_db` DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
-USE `attendance_db`;
+-- CREATE DATABASE IF NOT EXISTS `attendance_db` DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+-- USE `attendance_db`;
 
 -- 1. Grade Levels Table
 CREATE TABLE IF NOT EXISTS `grade_levels` (
