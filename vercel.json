@@ -1,19 +1,7 @@
 {
   "version": 2,
   "functions": {
-    "*.php": {
-      "runtime": "vercel-php@0.7.3"
-    },
-    "admin/*.php": {
-      "runtime": "vercel-php@0.7.3"
-    },
-    "professor/*.php": {
-      "runtime": "vercel-php@0.7.3"
-    },
-    "student/*.php": {
-      "runtime": "vercel-php@0.7.3"
-    },
-    "api/*.php": {
+    "api/index.php": {
       "runtime": "vercel-php@0.7.3"
     }
   },
@@ -23,25 +11,8 @@
       "dest": "/assets/$1"
     },
     {
-      "src": "/",
-      "dest": "/index.php"
-    },
-    {
-      "src": "/admin/?$",
-      "dest": "/admin/dashboard.php"
-    },
-    {
-      "src": "/professor/?$",
-      "dest": "/professor/dashboard.php"
-    },
-    {
-      "src": "/student/?$",
-      "dest": "/student/dashboard.php"
-    },
-    {
       "src": "/(.*)",
-      "dest": "/$1"
+      "dest": "/api/index.php"
     }
   ]
 }
-

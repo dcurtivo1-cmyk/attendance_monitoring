@@ -1,8 +1,12 @@
 <?php
 // config/database.php
 
-// Session settings
+// Session settings (ensure writable path for serverless cloud environments like Vercel)
 if (session_status() === PHP_SESSION_NONE) {
+    $tmp = sys_get_temp_dir();
+    if (is_dir($tmp) && is_writable($tmp)) {
+        session_save_path($tmp);
+    }
     session_start();
 }
 
