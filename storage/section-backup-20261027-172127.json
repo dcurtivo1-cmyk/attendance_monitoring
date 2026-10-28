@@ -1,0 +1,390 @@
+{
+    "created_at": "2026-10-27T17:21:27+01:00",
+    "users": [
+        {
+            "id": 1,
+            "identifier": "ADMIN-2026-001",
+            "role": "admin",
+            "grade_level": "Grade 8",
+            "course_section": null
+        },
+        {
+            "id": 2,
+            "identifier": "PROF-2026-001",
+            "role": "professor",
+            "grade_level": "Grade 8",
+            "course_section": null
+        },
+        {
+            "id": 3,
+            "identifier": "STUD-2026-000-001",
+            "role": "student",
+            "grade_level": "Grade 8",
+            "course_section": "Section A - Bonifacio"
+        },
+        {
+            "id": 4,
+            "identifier": "STUD-2026-000-002",
+            "role": "student",
+            "grade_level": "Grade 8",
+            "course_section": "Section A - Bonifacio"
+        },
+        {
+            "id": 5,
+            "identifier": "STUD-2026-000-003",
+            "role": "student",
+            "grade_level": "Grade 8",
+            "course_section": "Section B - Del Pilar"
+        },
+        {
+            "id": 6,
+            "identifier": "TCH-2026-001",
+            "role": "professor",
+            "grade_level": "Grade 8",
+            "course_section": null
+        },
+        {
+            "id": 7,
+            "identifier": "TCH-2026-002",
+            "role": "professor",
+            "grade_level": "Grade 8",
+            "course_section": null
+        },
+        {
+            "id": 8,
+            "identifier": "TCH-2026-003",
+            "role": "professor",
+            "grade_level": "Grade 8",
+            "course_section": null
+        },
+        {
+            "id": 9,
+            "identifier": "TCH-2026-004",
+            "role": "professor",
+            "grade_level": "Grade 8",
+            "course_section": null
+        },
+        {
+            "id": 10,
+            "identifier": "TCH-2026-005",
+            "role": "professor",
+            "grade_level": "Grade 8",
+            "course_section": null
+        },
+        {
+            "id": 11,
+            "identifier": "TCH-2026-006",
+            "role": "professor",
+            "grade_level": "Grade 8",
+            "course_section": null
+        },
+        {
+            "id": 12,
+            "identifier": "TCH-2026-007",
+            "role": "professor",
+            "grade_level": "Grade 8",
+            "course_section": null
+        },
+        {
+            "id": 13,
+            "identifier": "TCH-2026-008",
+            "role": "professor",
+            "grade_level": "Grade 8",
+            "course_section": null
+        },
+        {
+            "id": 14,
+            "identifier": "TCH-2026-009",
+            "role": "professor",
+            "grade_level": "Grade 8",
+            "course_section": null
+        },
+        {
+            "id": 15,
+            "identifier": "TCH-2026-010",
+            "role": "professor",
+            "grade_level": "Grade 8",
+            "course_section": null
+        },
+        {
+            "id": 16,
+            "identifier": "TCH-2026-011",
+            "role": "professor",
+            "grade_level": "Grade 8",
+            "course_section": null
+        },
+        {
+            "id": 17,
+            "identifier": "TCH-2026-012",
+            "role": "professor",
+            "grade_level": "Grade 8",
+            "course_section": null
+        },
+        {
+            "id": 18,
+            "identifier": "STUD-2026-000-004",
+            "role": "student",
+            "grade_level": "Grade 7",
+            "course_section": "Section A - Rizal"
+        },
+        {
+            "id": 19,
+            "identifier": "STUD-2026-000-005",
+            "role": "student",
+            "grade_level": "Grade 8",
+            "course_section": "Section B - Jacinto"
+        },
+        {
+            "id": 20,
+            "identifier": "STUD-2026-000-006",
+            "role": "student",
+            "grade_level": "Grade 9",
+            "course_section": "Section A - Mabini"
+        },
+        {
+            "id": 21,
+            "identifier": "STUD-2026-000-007",
+            "role": "student",
+            "grade_level": "Grade 10",
+            "course_section": "Section A - Luna"
+        },
+        {
+            "id": 23,
+            "identifier": "STUD-2026-000-008",
+            "role": "student",
+            "grade_level": "Grade 7",
+            "course_section": "Section B - Plaridel"
+        },
+        {
+            "id": 24,
+            "identifier": "STUD-2026-000-009",
+            "role": "student",
+            "grade_level": "Grade 10",
+            "course_section": "Section B - Del Pilar"
+        },
+        {
+            "id": 25,
+            "identifier": "STUD-2026-000-010",
+            "role": "student",
+            "grade_level": "Grade 7",
+            "course_section": "Jade"
+        }
+    ],
+    "teachers": [
+        {
+            "id": 1,
+            "user_id": 6,
+            "grade_level_id": 2,
+            "grade_level_name": "Grade 8",
+            "section_name": "Section A - Bonifacio"
+        },
+        {
+            "id": 2,
+            "user_id": 7,
+            "grade_level_id": 3,
+            "grade_level_name": "Grade 9",
+            "section_name": "Section A - Mabini"
+        },
+        {
+            "id": 3,
+            "user_id": 8,
+            "grade_level_id": 1,
+            "grade_level_name": "Grade 7",
+            "section_name": "Section A - Rizal"
+        },
+        {
+            "id": 4,
+            "user_id": 9,
+            "grade_level_id": 4,
+            "grade_level_name": "Grade 10",
+            "section_name": "Section A - Luna"
+        },
+        {
+            "id": 5,
+            "user_id": 10,
+            "grade_level_id": 2,
+            "grade_level_name": "Grade 8",
+            "section_name": "Section A - Bonifacio"
+        },
+        {
+            "id": 6,
+            "user_id": 11,
+            "grade_level_id": 3,
+            "grade_level_name": "Grade 9",
+            "section_name": "Section A - Mabini"
+        },
+        {
+            "id": 7,
+            "user_id": 12,
+            "grade_level_id": 4,
+            "grade_level_name": "Grade 10",
+            "section_name": "Section A - Luna"
+        },
+        {
+            "id": 8,
+            "user_id": 13,
+            "grade_level_id": 1,
+            "grade_level_name": "Grade 7",
+            "section_name": "Section A - Rizal"
+        },
+        {
+            "id": 9,
+            "user_id": 14,
+            "grade_level_id": 2,
+            "grade_level_name": "Grade 8",
+            "section_name": "Section A - Bonifacio"
+        },
+        {
+            "id": 10,
+            "user_id": 15,
+            "grade_level_id": 3,
+            "grade_level_name": "Grade 9",
+            "section_name": "Section A - Mabini"
+        },
+        {
+            "id": 11,
+            "user_id": 16,
+            "grade_level_id": 4,
+            "grade_level_name": "Grade 10",
+            "section_name": "Section A - Luna"
+        },
+        {
+            "id": 12,
+            "user_id": 17,
+            "grade_level_id": 1,
+            "grade_level_name": "Grade 7",
+            "section_name": "Section A - Rizal"
+        }
+    ],
+    "teacher_assignments": [
+        {
+            "id": 1,
+            "teacher_id": 1,
+            "grade_level_id": 2,
+            "section_name": "Section A - Bonifacio"
+        },
+        {
+            "id": 2,
+            "teacher_id": 2,
+            "grade_level_id": 3,
+            "section_name": "Section A - Mabini"
+        },
+        {
+            "id": 3,
+            "teacher_id": 3,
+            "grade_level_id": 1,
+            "section_name": "Grade 7 - Section A"
+        },
+        {
+            "id": 4,
+            "teacher_id": 4,
+            "grade_level_id": 4,
+            "section_name": "Grade 10 - Section A"
+        },
+        {
+            "id": 5,
+            "teacher_id": 5,
+            "grade_level_id": 2,
+            "section_name": "Grade 8 - Section A"
+        },
+        {
+            "id": 6,
+            "teacher_id": 6,
+            "grade_level_id": 3,
+            "section_name": "Grade 9 - Section A"
+        },
+        {
+            "id": 7,
+            "teacher_id": 7,
+            "grade_level_id": 4,
+            "section_name": "Grade 10 - Section A"
+        },
+        {
+            "id": 8,
+            "teacher_id": 8,
+            "grade_level_id": 1,
+            "section_name": "Grade 7 - Section A"
+        },
+        {
+            "id": 9,
+            "teacher_id": 9,
+            "grade_level_id": 2,
+            "section_name": "Grade 8 - Section A"
+        },
+        {
+            "id": 10,
+            "teacher_id": 10,
+            "grade_level_id": 3,
+            "section_name": "Grade 9 - Section A"
+        },
+        {
+            "id": 11,
+            "teacher_id": 11,
+            "grade_level_id": 4,
+            "section_name": "Grade 10 - Section A"
+        },
+        {
+            "id": 12,
+            "teacher_id": 12,
+            "grade_level_id": 1,
+            "section_name": "Grade 7 - Section A"
+        }
+    ],
+    "attendance_records": [
+        {
+            "id": 1,
+            "student_code": "STUD-2026-001",
+            "grade_level": "Grade 7",
+            "section_name": "Jupiter"
+        },
+        {
+            "id": 2,
+            "student_code": "STUD-2026-101",
+            "grade_level": "Grade 8",
+            "section_name": "Mercury"
+        },
+        {
+            "id": 3,
+            "student_code": "STUD-2026-0954",
+            "grade_level": "Grade 10",
+            "section_name": "Neptune"
+        },
+        {
+            "id": 4,
+            "student_code": "STUD-2026-0001",
+            "grade_level": "Grade 8",
+            "section_name": "Mercury"
+        },
+        {
+            "id": 5,
+            "student_code": "STUD-2026-005",
+            "grade_level": "Grade 7",
+            "section_name": "Jupiter"
+        },
+        {
+            "id": 6,
+            "student_code": "STUD-2026-101",
+            "grade_level": "Grade 9",
+            "section_name": "Saturn"
+        },
+        {
+            "id": 7,
+            "student_code": "STUD-2026-000-007",
+            "grade_level": "Grade 10",
+            "section_name": "Section A - Luna"
+        },
+        {
+            "id": 8,
+            "student_code": "STUD-2026-000-009",
+            "grade_level": "Grade 10",
+            "section_name": "Section B - Del Pilar"
+        },
+        {
+            "id": 9,
+            "student_code": "STUD-2026-000-010",
+            "grade_level": "Grade 7",
+            "section_name": "Jade"
+        }
+    ],
+    "school_sections": []
+}

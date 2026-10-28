@@ -2,10 +2,12 @@
 // professor/dashboard.php
 require_once __DIR__ . '/../config/database.php';
 require_once __DIR__ . '/../config/auth_check.php';
+require_once __DIR__ . '/../config/student_sections.php';
 
 require_auth(['professor', 'admin']);
 $user = current_user();
 $pdo = get_db_connection();
+$_SESSION['manual_attendance_csrf'] ??= bin2hex(random_bytes(32));
 
 $prof_id = (int)$user['id'];
 $today = date('Y-m-d');
@@ -14,6 +16,7 @@ $today = date('Y-m-d');
 $uStmt = $pdo->prepare("SELECT * FROM users WHERE id = ? LIMIT 1");
 $uStmt->execute([$prof_id]);
 $profUser = $uStmt->fetch() ?: $user;
+$teacherAccount = $profUser;
 
 // Ensure professor has a QR token
 $profQrToken = trim($profUser['qr_token'] ?? '');
@@ -42,7 +45,7 @@ if (empty($subjects)) {
     $tStmt->execute([$prof_id, $profUser['email'] ?? '']);
     $tSubId = (int)$tStmt->fetchColumn();
     if ($tSubId > 0) {
-        $pdo->prepare("UPDATE subjects SET professor_id = ? WHERE id = ?")->execute([$prof_id, $tSubId]);
+        $pdo->prepare("UPDATE subjects SET professor_id = ? WHERE id = ? AND professor_id IS NULL")->execute([$prof_id, $tSubId]);
         $subjectsStmt->execute([$prof_id]);
         $subjects = $subjectsStmt->fetchAll();
     }
@@ -50,12 +53,7 @@ if (empty($subjects)) {
 
 // Build array of handled subjects with their sections
 $handledSubjectsWithSections = [];
-$defaultSecMap = [
-    'Grade 7'  => 'Section A - Rizal',
-    'Grade 8'  => 'Section A - Bonifacio',
-    'Grade 9'  => 'Section A - Mabini',
-    'Grade 10' => 'Section A - Luna',
-];
+$sectionsByGrade = get_student_sections_by_grade($pdo);
 
 foreach ($subjects as $s) {
     $sId = (int)$s['id'];
@@ -71,12 +69,12 @@ foreach ($subjects as $s) {
 
     if (empty($foundSections)) {
         $gName = $s['grade_name'] ?? 'Grade 8';
-        $foundSections = [$defaultSecMap[$gName] ?? 'Section A - Bonifacio'];
+        $foundSections = $sectionsByGrade[$gName] ?? [];
     }
 
     $handledSubjectsWithSections[$sId] = [
         'subject'  => $s,
-        'sections' => $foundSections
+        'sections' => array_values(array_filter($foundSections, static fn($section) => trim($section) !== '' && $section !== 'ALL'))
     ];
 }
 
@@ -97,17 +95,18 @@ if (!$activeSubject && !empty($subjects)) {
     $selected_subject_id = (int)$activeSubject['id'];
 }
 
-// Default section if empty
-if ($selected_section === '' && isset($handledSubjectsWithSections[$selected_subject_id])) {
-    $selected_section = 'ALL';
+// Every generated QR must target one named section, including old ALL bookmarks.
+$activeSections = $handledSubjectsWithSections[$selected_subject_id]['sections'] ?? [];
+if (!in_array($selected_section, $activeSections, true)) {
+    $selected_section = $activeSections[0] ?? '';
 }
 
 // AJAX polling endpoint for real-time student attendance updates when students scan the professor's QR code
 if (isset($_GET['ajax_poll']) && $_GET['ajax_poll'] === '1') {
     header('Content-Type: application/json; charset=utf-8');
-    $pollSubId = intval($_GET['subject_id'] ?? $selected_subject_id);
+    $pollSubId = $selected_subject_id;
     $pollDate  = trim($_GET['date'] ?? $today);
-    $pollSec   = trim($_GET['section'] ?? $selected_section);
+    $pollSec   = $selected_section;
 
     $rosterQuery = "
         SELECT u.id AS student_id,
@@ -134,9 +133,11 @@ if (isset($_GET['ajax_poll']) && $_GET['ajax_poll'] === '1') {
         $rosterQuery .= " AND s.id = :sub_id";
         $params[':sub_id'] = $pollSubId;
     }
-    if ($pollSec !== '' && $pollSec !== 'ALL') {
+    if ($pollSec !== '') {
         $rosterQuery .= " AND u.course_section = :sec";
         $params[':sec'] = $pollSec;
+    } else {
+        $rosterQuery .= ' AND 1 = 0';
     }
     $rosterQuery .= " ORDER BY is_scanned DESC, a.time_in DESC, u.name ASC";
 
@@ -204,9 +205,11 @@ if ($selected_subject_id > 0) {
     $studentsQuery .= " AND s.id = :sub_id";
     $queryParams[':sub_id'] = $selected_subject_id;
 }
-if ($selected_section !== '' && $selected_section !== 'ALL') {
+if ($selected_section !== '') {
     $studentsQuery .= " AND u.course_section = :sec";
     $queryParams[':sec'] = $selected_section;
+} else {
+    $studentsQuery .= ' AND 1 = 0';
 }
 $studentsQuery .= " ORDER BY is_scanned DESC, a.time_in DESC, u.name ASC";
 
@@ -236,11 +239,12 @@ foreach ($assignedStudents as &$stRow) {
 unset($stRow);
 
 // QR Payload format encoded in the Professor's QR Code: PROF_ATTENDANCE|{profQrToken}|{subject_id}|{date}|{section}
-$sectionPart = ($selected_section !== '' && $selected_section !== 'ALL') ? '|' . $selected_section : '';
-$qrPayloadString = 'PROF_ATTENDANCE|' . $profQrToken . '|' . $selected_subject_id . '|' . $selected_date . $sectionPart;
+$qrPayloadString = ($selected_subject_id > 0 && $selected_section !== '')
+    ? 'PROF_ATTENDANCE|' . $profQrToken . '|' . $selected_subject_id . '|' . $selected_date . '|' . $selected_section
+    : '';
 
-$profDisplayName = preg_replace('/^Prof\.?\s+/i', 'Teacher ', trim($profUser['name'] ?? 'Teacher'));
-$profParts = preg_split('/\s+/', trim(str_replace(['Teacher', 'Prof.', 'Mr.', 'Ms.', 'Mrs.', "Ma'am", 'Sir'], '', $profDisplayName)));
+$profDisplayName = professor_display_name($profUser['name'] ?? null);
+$profParts = preg_split('/\s+/', $profDisplayName);
 $profParts = array_values(array_filter($profParts));
 $profInitials = count($profParts) >= 2
     ? strtoupper(substr($profParts[0], 0, 1) . substr($profParts[1], 0, 1))
@@ -1012,6 +1016,7 @@ $profInitials = count($profParts) >= 2
             .sidebar { width: 100% !important; min-width: 100% !important; max-width: 100% !important; position: relative; height: auto; }
         }
     </style>
+    <link rel="stylesheet" href="../assets/css/teacher-account.css">
 </head>
 <body>
 
@@ -1032,7 +1037,7 @@ $profInitials = count($profParts) >= 2
                 <i class="fa-solid fa-qrcode"></i>
                 <span>Dashboard &amp; QR Code</span>
             </a>
-            <a href="manual_attendance.php?subject_id=<?= $selected_subject_id ?>&date=<?= urlencode($selected_date) ?>" class="nav-link">
+            <a href="manual_attendance.php?subject_id=<?= $selected_subject_id ?>&amp;date=<?= urlencode($selected_date) ?>&amp;section=<?= urlencode($selected_section) ?>" data-manual-attendance class="nav-link">
                 <i class="fa-solid fa-clipboard-user"></i>
                 <span>Student Attendance</span>
             </a>
@@ -1044,14 +1049,14 @@ $profInitials = count($profParts) >= 2
                 <i class="fa-solid fa-chart-line"></i>
                 <span>Attendance Reports</span>
             </a>
+            <a href="profile.php" class="nav-link">
+                <i class="fa-solid fa-user-gear"></i>
+                <span>Profile</span>
+            </a>
         </nav>
 
         <div class="sidebar-footer">
-            <div class="prof-card">
-                <small>Teacher Account</small>
-                <strong><?= htmlspecialchars($profDisplayName) ?></strong>
-                <div style="font-size:0.76rem;color:rgba(255,255,255,0.72);margin-top:3px;">ID: <?= htmlspecialchars($profUser['identifier']) ?></div>
-            </div>
+            <?php require __DIR__ . '/../views/teacher_account_card.php'; ?>
         </div>
     </aside>
 
@@ -1067,13 +1072,7 @@ $profInitials = count($profParts) >= 2
                     <i class="fa-solid fa-right-from-bracket"></i>
                     <span>Logout</span>
                 </a>
-                <div class="profile-pill">
-                    <div class="avatar-circle"><?= htmlspecialchars($profInitials) ?></div>
-                    <div class="profile-meta">
-                        <strong><?= htmlspecialchars($profDisplayName) ?></strong>
-                        <small>Teacher / Faculty</small>
-                    </div>
-                </div>
+                <?php require __DIR__ . '/../views/teacher_header_profile.php'; ?>
             </div>
         </header>
 
@@ -1084,14 +1083,15 @@ $profInitials = count($profParts) >= 2
                     <h1>Kumusta, <?= htmlspecialchars($profDisplayName) ?>!</h1>
                     <p>Ipakita ang iyong Attendance QR Code sa klase upang ma-scan ng mga estudyante at awtomatikong maitala ang attendance.</p>
                     <div class="hero-badges">
-                        <span class="hero-badge"><i class="fa-solid fa-id-card"></i> <?= htmlspecialchars($profUser['identifier']) ?></span>
+                        <span class="hero-badge"><i class="fa-solid fa-id-card"></i> <?= htmlspecialchars($teacherAccount['identifier']) ?></span>
                         <span class="hero-badge"><i class="fa-solid fa-chalkboard-user"></i> Faculty Teacher</span>
                         <span class="hero-badge"><i class="fa-solid fa-calendar-day"></i> <?= date('M d, Y', strtotime($selected_date)) ?></span>
                     </div>
                 </div>
 
                 <form method="GET" action="dashboard.php" class="filter-controls" id="profFilterForm">
-                    <select name="subject_id" id="subjectSelect" class="select-input" onchange="this.form.submit()">
+                    <input type="hidden" name="section" id="heroSection" value="<?= htmlspecialchars($selected_section, ENT_QUOTES) ?>">
+                    <select name="subject_id" id="subjectSelect" class="select-input" onchange="document.getElementById('heroSection').value='';this.form.submit()">
                         <option value="0" <?= $selected_subject_id === 0 ? 'selected' : '' ?>>All My Subjects (<?= count($subjects) ?>)</option>
                         <?php foreach ($subjects as $s): ?>
                             <option value="<?= (int)$s['id'] ?>" <?= (int)$s['id'] === $selected_subject_id ? 'selected' : '' ?>>
@@ -1149,16 +1149,12 @@ $profInitials = count($profParts) >= 2
                         </label>
                         <div class="qr-select-styled">
                             <select id="qrSubjectSectionSelect" class="qr-select-element" onchange="onQrSubjectSectionChange(this.value)">
+                                <?php if (!$activeSections): ?><option value="" selected disabled>No section available for this subject</option><?php endif; ?>
                                 <?php foreach ($handledSubjectsWithSections as $subId => $item): 
                                     $sub = $item['subject'];
                                     $gradeStr = !empty($sub['grade_name']) ? ' (' . htmlspecialchars($sub['grade_name']) . ')' : '';
                                 ?>
                                     <optgroup label="<?= htmlspecialchars($sub['subject_code'] . ' — ' . $sub['subject_name'] . $gradeStr) ?>">
-                                        <?php if (count($item['sections']) > 1): ?>
-                                            <option value="<?= $subId ?>|ALL" <?= ($selected_subject_id === $subId && ($selected_section === 'ALL' || $selected_section === '')) ? 'selected' : '' ?>>
-                                                <?= htmlspecialchars($sub['subject_code']) ?> — All Sections
-                                            </option>
-                                        <?php endif; ?>
                                         <?php foreach ($item['sections'] as $sec): ?>
                                             <option value="<?= $subId ?>|<?= htmlspecialchars($sec) ?>" <?= ($selected_subject_id === $subId && $selected_section === $sec) ? 'selected' : '' ?>>
                                                 <?= htmlspecialchars($sub['subject_code']) ?> — <?= htmlspecialchars($sec) ?>
@@ -1181,7 +1177,7 @@ $profInitials = count($profParts) >= 2
                             <?= $activeSubject ? htmlspecialchars($activeSubject['subject_code'] . ' — ' . $activeSubject['subject_name']) : 'All Assigned Subjects' ?>
                         </strong>
                         <div id="qrActiveSectionBadge" style="margin-top:5px; display:inline-block; background:rgba(255,255,255,0.18); border:1px solid rgba(255,255,255,0.25); border-radius:6px; padding:3px 9px; font-size:0.78rem; font-weight:700; color:#e0fff3;">
-                            <i class="fa-solid fa-users-rectangle"></i> <span id="qrActiveSectionText"><?= ($selected_section && $selected_section !== 'ALL') ? htmlspecialchars($selected_section) : 'All Sections' ?></span>
+                            <i class="fa-solid fa-users-rectangle"></i> <span id="qrActiveSectionText"><?= $selected_section !== '' ? htmlspecialchars($selected_section) : 'No section assigned' ?></span>
                             <?= !empty($activeSubject['grade_name']) ? ' (' . htmlspecialchars($activeSubject['grade_name']) . ')' : '' ?>
                         </div>
                         <div style="font-size:0.75rem;color:rgba(255,255,255,0.78);margin-top:5px;">
@@ -1217,7 +1213,10 @@ $profInitials = count($profParts) >= 2
                             <span style="font-size:0.76rem;color:var(--green);font-weight:700;">
                                 <i class="fa-solid fa-circle" style="font-size:0.5rem;vertical-align:middle;"></i> Auto-Updating Live
                             </span>
-                            <a href="manual_attendance.php?subject_id=<?= $selected_subject_id ?>&date=<?= urlencode($selected_date) ?>" class="q-btn" style="padding:6px 12px;">
+                            <a href="subjects.php?subject_id=<?= (int)$selected_subject_id ?>&amp;section=<?= rawurlencode($selected_section) ?>#add-student" data-subject-students class="q-btn" style="padding:6px 12px;">
+                                <i class="fa-solid fa-user-plus"></i> Add Student
+                            </a>
+                            <a href="manual_attendance.php?subject_id=<?= $selected_subject_id ?>&amp;date=<?= urlencode($selected_date) ?>&amp;section=<?= urlencode($selected_section) ?>" data-manual-attendance class="q-btn" style="padding:6px 12px;">
                                 <i class="fa-solid fa-sliders"></i> Full Attendance Sheet
                             </a>
                         </div>
@@ -1231,10 +1230,10 @@ $profInitials = count($profParts) >= 2
 
                         <div class="status-filter-pills">
                             <button type="button" class="filter-pill active" onclick="setStatusFilter('scanned', this)">
-                                Scanned Records (<span id="pillScannedCount"><?= $scannedCount ?></span>)
+                                Attendance Records (<span id="pillScannedCount"><?= $scannedCount ?></span>)
                             </button>
                             <button type="button" class="filter-pill" onclick="setStatusFilter('unscanned', this)">
-                                Not Yet Scanned (<span id="pillUnscannedCount"><?= $unscannedCount ?></span>)
+                                Pending Attendance (<span id="pillUnscannedCount"><?= $unscannedCount ?></span>)
                             </button>
                             <button type="button" class="filter-pill" onclick="setStatusFilter('all', this)">
                                 All Enrolled (<?= $totalAssigned ?>)
@@ -1258,7 +1257,7 @@ $profInitials = count($profParts) >= 2
                                     <th>Student Name &amp; ID</th>
                                     <th>Grade &amp; Section</th>
                                     <th>Subject</th>
-                                    <th>Time Scanned</th>
+                                    <th>Time In</th>
                                     <th>Attendance Status</th>
                                     <th>Quick Mark</th>
                                 </tr>
@@ -1299,7 +1298,7 @@ $profInitials = count($profParts) >= 2
                                             </td>
                                             <td>
                                                 <strong><?= htmlspecialchars($stu['grade_level'] ?: 'Grade 8') ?></strong>
-                                                <div style="font-size:0.75rem;color:var(--ink-muted);"><?= htmlspecialchars($stu['course_section'] ?: 'Section A') ?></div>
+                                                <div style="font-size:0.75rem;color:var(--ink-muted);"><?= htmlspecialchars($stu['course_section'] ?: 'No section assigned') ?></div>
                                             </td>
                                             <td>
                                                 <span style="font-weight:700;color:var(--primary);"><?= htmlspecialchars($stu['subject_code']) ?></span>
@@ -1358,6 +1357,7 @@ $profInitials = count($profParts) >= 2
     let currentSection = <?= json_encode($selected_section) ?>;
     const selectedDate = <?= json_encode($selected_date) ?>;
     const profQrToken = <?= json_encode($profQrToken) ?>;
+    const sectionsBySubject = <?= json_encode(array_map(static fn($item) => $item['sections'], $handledSubjectsWithSections)) ?>;
     const subjectsMeta = <?= json_encode(array_column($subjects, null, 'id')) ?>;
     let currentQrPayload = <?= json_encode($qrPayloadString) ?>;
     let activeStatusFilter = 'scanned';
@@ -1376,6 +1376,10 @@ $profInitials = count($profParts) >= 2
         const container = document.getElementById('professorQrCodeCanvas');
         if (!container) return;
         container.innerHTML = '';
+        if (!payloadText) {
+            container.textContent = 'Select a subject with an assigned section to generate its QR code.';
+            return;
+        }
         if (window.QRCode) {
             new QRCode(container, {
                 text: payloadText,
@@ -1396,14 +1400,14 @@ $profInitials = count($profParts) >= 2
         if (!val) return;
         const parts = val.split('|');
         const newSubId = parseInt(parts[0], 10);
-        const newSec = parts[1] || 'ALL';
+        const newSec = parts.slice(1).join('|');
+        if (!newSec || !sectionsBySubject[newSubId]?.includes(newSec)) return;
 
         currentSubjectId = newSubId;
         currentSection = newSec;
 
         // Build new QR payload
-        const sectionSuffix = (newSec && newSec !== 'ALL') ? `|${newSec}` : '';
-        currentQrPayload = `PROF_ATTENDANCE|${profQrToken}|${newSubId}|${selectedDate}${sectionSuffix}`;
+        currentQrPayload = `PROF_ATTENDANCE|${profQrToken}|${newSubId}|${selectedDate}|${newSec}`;
 
         // Redraw QR code immediately
         renderProfessorQr(currentQrPayload);
@@ -1417,18 +1421,24 @@ $profInitials = count($profParts) >= 2
             titleEl.textContent = `${subInfo.subject_code} — ${subInfo.subject_name}`;
         }
         if (secTextEl) {
-            secTextEl.textContent = newSec === 'ALL' ? 'All Sections' : newSec;
+            secTextEl.textContent = newSec;
         }
 
         // Keep URL in sync
         const url = new URL(window.location.href);
         url.searchParams.set('subject_id', newSubId);
-        if (newSec && newSec !== 'ALL') {
-            url.searchParams.set('section', newSec);
-        } else {
-            url.searchParams.delete('section');
-        }
+        url.searchParams.set('section', newSec);
         window.history.replaceState({}, '', url.toString());
+
+        // Class links follow section changes made without a page reload.
+        document.querySelectorAll('[data-manual-attendance], [data-subject-students]').forEach(link => {
+            const target = new URL(link.href, window.location.href);
+            target.searchParams.set('subject_id', newSubId);
+            target.searchParams.set('date', selectedDate);
+            target.searchParams.set('section', newSec);
+            link.href = target.toString();
+        });
+        document.getElementById('heroSection').value = newSec;
 
         // Keep Hero filter select in sync
         const heroSelect = document.getElementById('subjectSelect');
@@ -1441,22 +1451,24 @@ $profInitials = count($profParts) >= 2
     }
 
     function regenerateSessionQr() {
-        const sectionSuffix = (currentSection && currentSection !== 'ALL') ? `|${currentSection}` : '';
-        currentQrPayload = `PROF_ATTENDANCE|${profQrToken}|${currentSubjectId}|${selectedDate}${sectionSuffix}`;
+        if (!currentSection || !sectionsBySubject[currentSubjectId]?.includes(currentSection)) return;
+        currentQrPayload = `PROF_ATTENDANCE|${profQrToken}|${currentSubjectId}|${selectedDate}|${currentSection}`;
         renderProfessorQr(currentQrPayload);
     }
 
     function copyQrToken() {
+        if (!currentQrPayload) return;
         navigator.clipboard?.writeText(currentQrPayload);
         alert('Nakopya na ang Attendance QR Code token: ' + currentQrPayload);
     }
 
     function downloadProfessorQr() {
+        if (!currentQrPayload) return;
         const img = document.querySelector('#professorQrCodeCanvas img') || document.querySelector('#professorQrCodeCanvas canvas');
         if (!img) return;
         const subInfo = subjectsMeta[currentSubjectId];
         const subCode = subInfo ? subInfo.subject_code : 'Subject';
-        const secTag = (currentSection && currentSection !== 'ALL') ? `_${currentSection.replace(/[^a-zA-Z0-9]/g, '_')}` : '';
+        const secTag = currentSection ? `_${currentSection.replace(/[^a-zA-Z0-9]/g, '_')}` : '';
 
         const link = document.createElement('a');
         link.download = `QR_${subCode}${secTag}_${selectedDate}.png`;
@@ -1526,11 +1538,14 @@ $profInitials = count($profParts) >= 2
     }
 
     function quickMarkStudent(studentId, subjectId, status, btnEl) {
+        if (!currentSection) return;
         fetch('../api/manual_attendance.php', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 action: 'set_status',
+                csrf: <?= json_encode($_SESSION['manual_attendance_csrf']) ?>,
+                section: currentSection,
                 subject_id: subjectId,
                 student_id: studentId,
                 date: selectedDate,
@@ -1594,7 +1609,7 @@ $profInitials = count($profParts) >= 2
                     </td>
                     <td>
                         <strong>${escapeHtml(stu.grade_level || 'Grade 8')}</strong>
-                        <div style="font-size:0.75rem;color:var(--ink-muted);">${escapeHtml(stu.course_section || 'Section A')}</div>
+                        <div style="font-size:0.75rem;color:var(--ink-muted);">${escapeHtml(stu.course_section || 'No section assigned')}</div>
                     </td>
                     <td>
                         <span style="font-weight:700;color:var(--primary);">${escapeHtml(stu.subject_code)}</span>
@@ -1635,7 +1650,8 @@ $profInitials = count($profParts) >= 2
     }
 
     function pollLiveStudentAttendance() {
-        const secParam = (currentSection && currentSection !== 'ALL') ? `&section=${encodeURIComponent(currentSection)}` : '';
+        if (!currentSection) return;
+        const secParam = `&section=${encodeURIComponent(currentSection)}`;
         fetch(`dashboard.php?ajax_poll=1&subject_id=${currentSubjectId}&date=${encodeURIComponent(selectedDate)}${secParam}`, {
             cache: 'no-store'
         })

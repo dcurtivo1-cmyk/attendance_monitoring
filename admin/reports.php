@@ -48,7 +48,7 @@ if ($report_type === 'student') {
         JOIN users u ON u.id = a.student_id
         JOIN subjects s ON s.id = a.subject_id
         LEFT JOIN grade_levels gl ON gl.id = s.grade_level_id
-        LEFT JOIN users prof ON prof.id = a.scanned_by
+        LEFT JOIN users prof ON prof.id = COALESCE(a.scanned_by, s.professor_id)
         WHERE a.date BETWEEN :start_date AND :end_date
     ";
     $params = [':start_date' => $start_date, ':end_date' => $end_date];
@@ -365,6 +365,7 @@ $tchSummary = $tchTotalStmt->fetch();
                 <i class="fa-solid fa-chalkboard-user"></i>
                 <span>Teachers</span>
             </a>
+            <a class="nav-item" href="subject_editing.php"><i class="fa-solid fa-book-open"></i><span>Subjects &amp; Sections</span></a>
             <a class="nav-item" href="attendance.php">
                 <i class="fa-solid fa-clipboard-check"></i>
                 <span>Attendance</span>
@@ -477,7 +478,7 @@ $tchSummary = $tchTotalStmt->fetch();
                             <option value="0">All Teachers</option>
                             <?php foreach ($allTeachers as $tOpt): ?>
                                 <option value="<?= (int)$tOpt['id'] ?>" <?= $teacher_filter === (int)$tOpt['id'] ? 'selected' : '' ?>>
-                                    <?= htmlspecialchars($tOpt['full_name']) ?>
+                                    <?= htmlspecialchars(professor_display_name($tOpt['full_name'])) ?>
                                 </option>
                             <?php endforeach; ?>
                         </select>
@@ -565,8 +566,8 @@ $tchSummary = $tchTotalStmt->fetch();
                                         <td><strong><?= htmlspecialchars($row['student_name']) ?></strong><br><small><?= htmlspecialchars($row['student_id']) ?></small></td>
                                         <td><?= htmlspecialchars($row['grade_name'] ?? ($row['course_section'] ?: 'Grade 7')) ?></td>
                                         <td><strong><?= htmlspecialchars($row['subject_name']) ?></strong> <small>(<?= htmlspecialchars($row['subject_code']) ?>)</small></td>
-                                        <td><?= htmlspecialchars($row['teacher_name'] ?? 'N/A') ?></td>
-                                        <td><?= date('h:i A', strtotime($row['time_in'])) ?></td>
+                                        <td><?= htmlspecialchars(professor_display_name($row['teacher_name'] ?? 'N/A')) ?></td>
+                                        <td><?= school_format_time($row['time_in']) ?></td>
                                         <td><span class="status-pill <?= $stBadge ?>"><?= htmlspecialchars($row['status']) ?></span></td>
                                     </tr>
                                 <?php endforeach; ?>
@@ -586,7 +587,7 @@ $tchSummary = $tchTotalStmt->fetch();
                         <thead>
                             <tr>
                                 <th>Date / Day</th>
-                                <th>Teacher ID &amp; Name</th>
+                                <th>Teacher Name</th>
                                 <th>Subject</th>
                                 <th>Grade Level</th>
                                 <th>Time In</th>
@@ -603,10 +604,10 @@ $tchSummary = $tchTotalStmt->fetch();
                                 ?>
                                     <tr>
                                         <td><strong><?= date('M d, Y', strtotime($row['date'])) ?></strong><br><small><?= date('l', strtotime($row['date'])) ?></small></td>
-                                        <td><strong><?= htmlspecialchars($row['full_name']) ?></strong><br><small><?= htmlspecialchars($row['teacher_code']) ?></small></td>
+                                        <td><strong><?= htmlspecialchars(professor_display_name($row['full_name'])) ?></strong></td>
                                         <td><strong><?= htmlspecialchars($row['subject_name']) ?></strong></td>
                                         <td><span class="student-pill"><?= htmlspecialchars($row['grade_level_name']) ?></span></td>
-                                        <td><?= !empty($row['time_in']) ? date('h:i A', strtotime($row['time_in'])) : '—' ?></td>
+                                        <td><?= !empty($row['time_in']) ? school_format_time($row['time_in']) : '—' ?></td>
                                         <td><?= !empty($row['time_out']) ? date('h:i A', strtotime($row['time_out'])) : '—' ?></td>
                                         <td><span class="status-pill <?= $stBadge ?>"><?= htmlspecialchars($row['status']) ?></span></td>
                                     </tr>
@@ -680,7 +681,7 @@ $tchSummary = $tchTotalStmt->fetch();
                                     <tr>
                                         <td><strong><?= htmlspecialchars($sRow['subject_name']) ?></strong></td>
                                         <td><span class="student-pill"><?= htmlspecialchars($sRow['grade_level_name']) ?></span></td>
-                                        <td><?= htmlspecialchars($sRow['teacher_name']) ?></td>
+                                        <td><?= htmlspecialchars(professor_display_name($sRow['teacher_name'])) ?></td>
                                         <td><?= (int)$sRow['total_logs'] ?></td>
                                         <td><span class="status-pill present"><?= (int)$sRow['present_count'] ?></span></td>
                                         <td><span class="status-pill late"><?= (int)$sRow['late_count'] ?></span></td>

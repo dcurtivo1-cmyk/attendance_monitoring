@@ -52,7 +52,7 @@ try {
         $records[] = [
             'id'            => (int)$r['id'],
             'teacher_id'    => $r['teacher_id'],
-            'full_name'     => $r['full_name'],
+            'full_name'     => professor_display_name($r['full_name']),
             'subject_name'  => $r['subject_name'],
             'grade_level'   => $r['grade_level_name'],
             'status'        => $st,

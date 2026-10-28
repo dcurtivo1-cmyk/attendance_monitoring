@@ -22,27 +22,39 @@ $error = '';
 $success = '';
 
 if (isset($_GET['registered'])) {
-    $success = "Registration successful! You can now log in with your credentials.";
+    $success = 'Registration successful! ' . ($_SESSION['registration_notice'] ?? 'You can now log in with your email address and password.');
+    unset($_SESSION['registration_notice']);
+}
+if (isset($_GET['reset']) && $_GET['reset'] === 'success') {
+    $success = "Password reset successfully! You can now log in with your new password.";
 }
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    $login_input = trim($_POST['login_input'] ?? '');
-    $password = trim($_POST['password'] ?? '');
+    $email = trim($_POST['email'] ?? '');
+    $password = ($_POST['password'] ?? '');
 
-    if (empty($login_input) || empty($password)) {
+    if (empty($email) || empty($password)) {
         $error = "Please fill in all fields.";
+    } elseif (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
+        $error = "Please enter a valid email address.";
     } else {
         try {
             $pdo = get_db_connection();
-            // Allow login via Email or Student/Employee ID
-            $stmt = $pdo->prepare("SELECT * FROM users WHERE email = :email OR identifier = :identifier LIMIT 1");
-            $stmt->execute([
-                ':email' => $login_input,
-                ':identifier' => $login_input
-            ]);
+            // Authenticate strictly via Email Address and Password
+            $stmt = $pdo->prepare("SELECT * FROM users WHERE LOWER(email) = LOWER(:email) LIMIT 1");
+            $stmt->execute([':email' => $email]);
             $user = $stmt->fetch();
 
-            if ($user && (password_verify($password, $user['password']) || $password === $user['password'])) {
+            if ($user && password_verify($password, $user['password'])) {
+                // Upgrade the stored hash when the hashing cost changes
+                if (password_needs_rehash($user['password'], PASSWORD_BCRYPT)) {
+                    $rehashed = password_hash($password, PASSWORD_BCRYPT);
+                    $updateStmt = $pdo->prepare("UPDATE users SET password = :password WHERE id = :id");
+                    $updateStmt->execute([':password' => $rehashed, ':id' => $user['id']]);
+                }
+
+                session_regenerate_id(true);
+
                 // Set Session
                 $_SESSION['user_id'] = $user['id'];
                 $_SESSION['user_identifier'] = $user['identifier'];
@@ -64,10 +76,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     exit;
                 }
             } else {
-                $error = "Invalid Student/Employee ID or Password.";
+                $error = "Invalid Email Address or Password.";
             }
         } catch (PDOException $e) {
-            $error = "Database Error: " . $e->getMessage();
+            error_log("Login database failure: " . $e->getMessage());
+            $error = "Sign in is temporarily unavailable. Please try again later.";
         }
     }
 }
@@ -125,18 +138,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
             <span class="eyebrow">Authorized access</span>
             <h2>Welcome back</h2>
-            <div class="sub">Sign in with your school-issued account credentials.</div>
+            <div class="sub">Sign in with your registered email address and password.</div>
 
             <form action="login.php" method="POST">
                 <div class="field-group">
-                    <label for="login_input">Email address</label>
-                    <input class="auth-input" type="text" id="login_input" name="login_input" value="<?= isset($_POST['login_input']) ? htmlspecialchars($_POST['login_input']) : '' ?>" placeholder="elena.morris@northfield.edu" required>
+                    <label for="email">Email address</label>
+                    <input class="auth-input" type="email" id="email" name="email" value="<?= isset($_POST['email']) ? htmlspecialchars($_POST['email']) : '' ?>" placeholder="student@school.edu.ph" required autocomplete="email">
                 </div>
 
                 <div class="field-group">
                     <label for="password">Password</label>
                     <div class="password-field">
-                        <input class="auth-input" type="password" id="password" name="password" placeholder="••••••••••••" required>
+                        <input class="auth-input" type="password" id="password" name="password" placeholder="••••••••••••" required autocomplete="current-password">
                         <button type="button" class="password-toggle" aria-label="Toggle password visibility">
                             <i class="fa-regular fa-eye-slash"></i>
                         </button>
@@ -145,10 +158,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
                 <div class="auth-options">
                     <label class="checkbox-row">
-                        <input type="checkbox" checked>
+                        <input type="checkbox" name="remember" checked>
                         <span>Remember me</span>
                     </label>
-                    <a href="#" class="inline-link">Forgot password?</a>
+                    <a href="forgot_password.php" class="inline-link">Forgot password?</a>
                 </div>
 
                 <button type="submit" class="auth-submit">Sign in to workspace <i class="fa-solid fa-arrow-right"></i></button>

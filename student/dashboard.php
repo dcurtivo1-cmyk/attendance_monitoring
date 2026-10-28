@@ -8,7 +8,11 @@ $user = current_user();
 $pdo = get_db_connection();
 
 $activeView = $_GET['view'] ?? 'dashboard';
-if (!in_array($activeView, ['dashboard', 'scanner', 'subjects', 'teachers', 'attendance'], true)) {
+// Keep old directory bookmarks useful now that teachers appear under Subjects.
+if ($activeView === 'teachers') {
+    $activeView = 'subjects';
+}
+if (!in_array($activeView, ['dashboard', 'scanner', 'subjects', 'attendance'], true)) {
     $activeView = 'dashboard';
 }
 
@@ -16,7 +20,6 @@ $viewTitles = [
     'dashboard'  => 'Student Dashboard',
     'scanner'    => 'QR Attendance Scanner',
     'subjects'   => 'My Assigned Subjects',
-    'teachers'   => 'My Teachers Directory',
     'attendance' => 'My Attendance Records'
 ];
 
@@ -27,17 +30,7 @@ $student = $stmt->fetch();
 
 $studentGrade = !empty($student['grade_level']) ? $student['grade_level'] : 'Grade 8';
 $rawSection = trim($student['course_section'] ?? '');
-if ($rawSection === '' || stripos($rawSection, 'bsit') !== false || stripos($rawSection, 'it-') === 0) {
-    $highSchoolSections = [
-        'Grade 7'  => 'Section A - Rizal',
-        'Grade 8'  => 'Section A - Bonifacio',
-        'Grade 9'  => 'Section A - Mabini',
-        'Grade 10' => 'Section A - Luna',
-    ];
-    $studentSection = $highSchoolSections[$studentGrade] ?? 'Section A - Bonifacio';
-} else {
-    $studentSection = $rawSection;
-}
+$studentSection = $rawSection !== '' ? $rawSection : 'No section assigned';
 
 // Ensure student has assigned high school subjects for their grade level
 $checkEnrolled = $pdo->prepare("
@@ -57,14 +50,6 @@ if ((int)$checkEnrolled->fetchColumn() === 0) {
     ")->execute([$user['id'], $studentGrade]);
 }
 
-function format_teacher_title(string $name): string {
-    $trimmed = trim($name);
-    if ($trimmed === '' || strcasecmp($trimmed, 'Assigned Professor') === 0 || strcasecmp($trimmed, 'Professor') === 0) {
-        return 'Teacher Juan Dela Cruz';
-    }
-    $trimmed = preg_replace('/^Prof\.?\s+/i', 'Teacher ', $trimmed);
-    return $trimmed;
-}
 
 // Fetch all subjects assigned to this student along with the full name of the teacher
 $subjectsStmt = $pdo->prepare("
@@ -72,7 +57,7 @@ $subjectsStmt = $pdo->prepare("
            s.subject_code,
            s.subject_name,
            gl.grade_name,
-           COALESCE(t.full_name, p.name, 'Teacher Juan Dela Cruz') AS teacher_full_name,
+           COALESCE(p.name, t.full_name, '') AS teacher_full_name,
            COALESCE(t.teacher_id, p.identifier, 'TCH-2026-001') AS teacher_identifier,
            COALESCE(t.email, p.email, '') AS teacher_email,
            COALESCE(t.contact_number, '') AS teacher_contact,
@@ -84,11 +69,11 @@ $subjectsStmt = $pdo->prepare("
     JOIN subjects s ON s.id = ss.subject_id
     LEFT JOIN grade_levels gl ON gl.id = s.grade_level_id
     LEFT JOIN users p ON p.id = s.professor_id
-    LEFT JOIN teachers t ON (t.subject_id = s.id OR t.user_id = s.professor_id OR (t.grade_level_id = s.grade_level_id AND t.subject_name = s.subject_name))
+    LEFT JOIN teachers t ON t.user_id = s.professor_id
     LEFT JOIN schedules sc ON sc.subject_id = s.id
     WHERE ss.student_id = ? AND s.grade_level_id IS NOT NULL
     GROUP BY s.id
-    ORDER BY s.subject_code ASC
+    ORDER BY s.subject_code DESC, s.id DESC
 ");
 $subjectsStmt->execute([$user['id']]);
 $enrolledSubjects = $subjectsStmt->fetchAll();
@@ -106,11 +91,11 @@ $defaultTimeSlots = [
 $defaultWeekDays = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'];
 
 foreach ($enrolledSubjects as $idx => &$subRow) {
-    $subRow['teacher_full_name'] = format_teacher_title((string)$subRow['teacher_full_name']);
-    $subRow['teacher_identifier'] = preg_replace('/^PROF-/i', 'TCH-', (string)$subRow['teacher_identifier']);
-    $subRow['teacher_email'] = preg_replace('/^prof\./i', 'teacher.', (string)$subRow['teacher_email']);
+    $subRow['teacher_full_name'] = professor_display_name((string)$subRow['teacher_full_name']);
 
-    $slot = $defaultTimeSlots[$idx % count($defaultTimeSlots)];
+    // Preserve existing fallback schedules when reversing the displayed subject order.
+    $scheduleIndex = count($enrolledSubjects) - 1 - $idx;
+    $slot = $defaultTimeSlots[$scheduleIndex % count($defaultTimeSlots)];
     $startTime = !empty($subRow['start_time']) ? $subRow['start_time'] : $slot[0];
     $endTime   = !empty($subRow['end_time']) ? $subRow['end_time'] : $slot[1];
 
@@ -120,43 +105,33 @@ foreach ($enrolledSubjects as $idx => &$subRow) {
     } elseif ($rawDay !== '' && in_array(ucfirst(strtolower($rawDay)), ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'])) {
         $dayOfWeek = ucfirst(strtolower($rawDay));
     } else {
-        $dayOfWeek = $defaultWeekDays[$idx % count($defaultWeekDays)];
+        $dayOfWeek = $defaultWeekDays[$scheduleIndex % count($defaultWeekDays)];
     }
     $subRow['schedule_day'] = $dayOfWeek;
     $subRow['schedule_date'] = $dayOfWeek;
+    $subRow['schedule_start_time'] = date('H:i:s', strtotime($startTime));
+    $subRow['schedule_end_time'] = date('H:i:s', strtotime($endTime));
     $subRow['schedule_time'] = date('h:i A', strtotime($startTime)) . ' - ' . date('h:i A', strtotime($endTime));
     $subRow['schedule_datetime'] = $dayOfWeek . ' • ' . $subRow['schedule_time'];
 }
 unset($subRow);
 
-// Build unique list of all teachers teaching this student
-$myTeachersMap = [];
-foreach ($enrolledSubjects as $sub) {
-    $tKey = strtolower(trim($sub['teacher_full_name']));
-    if (!isset($myTeachersMap[$tKey])) {
-        $parts = preg_split('/\s+/', trim(str_replace(['Teacher', 'Mr.', 'Ms.', 'Mrs.', 'Prof.', "Ma'am", 'Sir'], '', $sub['teacher_full_name'])));
-        $parts = array_values(array_filter($parts));
-        $initials = count($parts) >= 2
-            ? strtoupper(substr($parts[0], 0, 1) . substr($parts[1], 0, 1))
-            : strtoupper(substr($parts[0] ?? 'TC', 0, 2));
+// My Subjects follows the school week, then the start time within each day.
+$subjectsBySchedule = $enrolledSubjects;
+$scheduleDayOrder = array_flip(['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']);
+usort($subjectsBySchedule, static function (array $a, array $b) use ($scheduleDayOrder): int {
+    return (($scheduleDayOrder[$a['schedule_day']] ?? 7) <=> ($scheduleDayOrder[$b['schedule_day']] ?? 7))
+        ?: strcmp($a['schedule_start_time'], $b['schedule_start_time'])
+        ?: strcmp($a['schedule_end_time'], $b['schedule_end_time'])
+        ?: strnatcasecmp($b['subject_code'], $a['subject_code'])
+        ?: ($b['subject_id'] <=> $a['subject_id']);
+});
 
-        $myTeachersMap[$tKey] = [
-            'full_name'       => $sub['teacher_full_name'],
-            'identifier'      => $sub['teacher_identifier'],
-            'email'           => $sub['teacher_email'],
-            'contact'         => $sub['teacher_contact'],
-            'department_code' => $sub['department_code'],
-            'initials'        => $initials,
-            'subjects'        => []
-        ];
-    }
-    $myTeachersMap[$tKey]['subjects'][] = [
-        'code'     => $sub['subject_code'],
-        'name'     => $sub['subject_name'],
-        'schedule' => $sub['schedule_datetime']
-    ];
-}
-$myTeachers = array_values($myTeachersMap);
+// Retain the dashboard total without building a separate teacher directory.
+$assignedTeacherCount = count(array_unique(array_map(
+    static fn(array $subject): string => strtolower(trim($subject['teacher_full_name'])),
+    $enrolledSubjects
+)));
 
 // Attendance statistics
 $statStmt = $pdo->prepare("
@@ -176,19 +151,19 @@ $logsStmt = $pdo->prepare("
     SELECT a.*,
            s.subject_code,
            s.subject_name,
-           COALESCE(t.full_name, p.name, 'Teacher') AS professor_name
+           COALESCE(p.name, t.full_name, '') AS professor_name
     FROM attendance a
     JOIN subjects s ON a.subject_id = s.id
-    LEFT JOIN users p ON a.scanned_by = p.id
-    LEFT JOIN teachers t ON t.user_id = a.scanned_by OR t.subject_id = s.id
+    LEFT JOIN users p ON p.id = COALESCE(a.scanned_by, s.professor_id)
+    LEFT JOIN teachers t ON t.user_id = p.id
     WHERE a.student_id = ?
     GROUP BY a.id
-    ORDER BY a.date DESC, a.time_in DESC
+    ORDER BY a.date DESC, a.time_in DESC, a.id DESC
 ");
 $logsStmt->execute([$user['id']]);
 $recentLogs = $logsStmt->fetchAll();
 foreach ($recentLogs as &$rLog) {
-    $rLog['professor_name'] = format_teacher_title((string)$rLog['professor_name']);
+    $rLog['professor_name'] = professor_display_name((string)$rLog['professor_name']);
 }
 unset($rLog);
 
@@ -840,77 +815,6 @@ $stuInitials = count($stuNameParts) >= 2
             flex-shrink: 0;
         }
 
-        /* Teacher Directory Grid */
-        .teachers-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(290px, 1fr));
-            gap: 16px;
-        }
-
-        .teacher-card {
-            background: #f9fcfa;
-            border: 1px solid var(--card-border);
-            border-radius: 15px;
-            padding: 16px 18px;
-            transition: transform 0.15s ease, box-shadow 0.15s ease;
-        }
-
-        .teacher-card:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 8px 20px rgba(11, 57, 48, 0.06);
-            background: #ffffff;
-        }
-
-        .teacher-card-top {
-            display: flex;
-            align-items: center;
-            gap: 12px;
-            margin-bottom: 12px;
-        }
-
-        .teacher-avatar-lg {
-            width: 44px;
-            height: 44px;
-            border-radius: 12px;
-            background: linear-gradient(135deg, #0d5b49, #158568);
-            color: #ffffff;
-            font-weight: 800;
-            font-size: 0.92rem;
-            display: grid;
-            place-items: center;
-            flex-shrink: 0;
-        }
-
-        .teacher-card-name {
-            font-size: 0.96rem;
-            font-weight: 800;
-            color: var(--ink-dark);
-        }
-
-        .teacher-card-id {
-            font-size: 0.75rem;
-            color: var(--ink-muted);
-            font-weight: 600;
-        }
-
-        .teacher-subject-list {
-            list-style: none;
-            border-top: 1px solid #e6efec;
-            padding-top: 10px;
-            display: flex;
-            flex-direction: column;
-            gap: 6px;
-        }
-
-        .teacher-subject-list li {
-            font-size: 0.8rem;
-            color: var(--ink-main);
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            gap: 8px;
-        }
-
         .status-badge {
             display: inline-flex;
             align-items: center;
@@ -963,13 +867,13 @@ $stuInitials = count($stuNameParts) >= 2
                 <i class="fa-solid fa-book-open"></i>
                 <span>My Subjects</span>
             </a>
-            <a href="dashboard.php?view=teachers" class="nav-link <?= $activeView === 'teachers' ? 'active' : '' ?>">
-                <i class="fa-solid fa-chalkboard-user"></i>
-                <span>My Teachers</span>
-            </a>
             <a href="dashboard.php?view=attendance" class="nav-link <?= $activeView === 'attendance' ? 'active' : '' ?>">
                 <i class="fa-solid fa-clipboard-check"></i>
                 <span>Attendance Records</span>
+            </a>
+            <a href="profile.php" class="nav-link">
+                <i class="fa-solid fa-user-gear"></i>
+                <span>Profile</span>
             </a>
         </nav>
 
@@ -1035,7 +939,7 @@ $stuInitials = count($stuNameParts) >= 2
                     <div class="kpi-card">
                         <div class="kpi-icon blue"><i class="fa-solid fa-chalkboard-user"></i></div>
                         <div>
-                            <div class="kpi-val"><?= count($myTeachers) ?></div>
+                            <div class="kpi-val"><?= $assignedTeacherCount ?></div>
                             <div class="kpi-label">Assigned Teachers</div>
                         </div>
                     </div>
@@ -1131,6 +1035,7 @@ $stuInitials = count($stuNameParts) >= 2
                         <span class="pill-count"><?= count($enrolledSubjects) ?> Subjects</span>
                     </div>
 
+                    <p style="margin-bottom:16px;color:var(--ink-muted);font-size:0.85rem;">Monday hanggang Sunday, pinakamaagang oras muna sa bawat araw.</p>
                     <?php if (empty($enrolledSubjects)): ?>
                         <div style="padding:28px;text-align:center;color:var(--ink-muted);">Walang naka-assign na subjects.</div>
                     <?php else: ?>
@@ -1146,16 +1051,13 @@ $stuInitials = count($stuNameParts) >= 2
                                     </tr>
                                 </thead>
                                 <tbody>
-                                    <?php foreach ($enrolledSubjects as $sub): ?>
+                                    <?php foreach ($subjectsBySchedule as $sub): ?>
                                         <tr>
                                             <td><span class="subject-code-badge"><?= htmlspecialchars($sub['subject_code']) ?></span></td>
                                             <td><strong style="color:var(--ink-dark);"><?= htmlspecialchars($sub['subject_name']) ?></strong></td>
                                             <td><?= htmlspecialchars($sub['grade_name'] ?: $studentGrade) ?> • <?= htmlspecialchars($studentSection) ?></td>
                                             <td>
                                                 <strong style="color:var(--primary);"><?= htmlspecialchars($sub['teacher_full_name']) ?></strong>
-                                                <?php if (!empty($sub['teacher_email'])): ?>
-                                                    <div style="font-size:0.75rem;color:var(--ink-muted);"><?= htmlspecialchars($sub['teacher_email']) ?></div>
-                                                <?php endif; ?>
                                             </td>
                                             <td>
                                                 <strong style="color:var(--ink-dark);"><?= htmlspecialchars($sub['schedule_date']) ?></strong>
@@ -1165,50 +1067,6 @@ $stuInitials = count($stuNameParts) >= 2
                                     <?php endforeach; ?>
                                 </tbody>
                             </table>
-                        </div>
-                    <?php endif; ?>
-                </section>
-            <?php endif; ?>
-
-            <!-- FULL TEACHERS LIST VIEW -->
-            <?php if ($activeView === 'teachers'): ?>
-                <section class="card" style="margin-bottom:22px;">
-                    <div class="card-header">
-                        <div class="card-title">
-                            <i class="fa-solid fa-chalkboard-user"></i>
-                            <span>Mga Teachers na Nagtuturo sa Iyo (Full Name &amp; Subjects)</span>
-                        </div>
-                        <span class="pill-count"><?= count($myTeachers) ?> Teachers</span>
-                    </div>
-
-                    <?php if (empty($myTeachers)): ?>
-                        <div style="padding:24px;text-align:center;color:var(--ink-muted);">Wala pang nakatalagang guro.</div>
-                    <?php else: ?>
-                        <div class="teachers-grid">
-                            <?php foreach ($myTeachers as $t): ?>
-                                <div class="teacher-card">
-                                    <div class="teacher-card-top">
-                                        <div class="teacher-avatar-lg"><?= htmlspecialchars($t['initials']) ?></div>
-                                        <div>
-                                            <div class="teacher-card-name"><?= htmlspecialchars($t['full_name']) ?></div>
-                                            <div class="teacher-card-id">
-                                                <?= htmlspecialchars($t['identifier']) ?>
-                                                <?php if (!empty($t['email'])): ?>
-                                                    • <?= htmlspecialchars($t['email']) ?>
-                                                <?php endif; ?>
-                                            </div>
-                                        </div>
-                                    </div>
-                                    <ul class="teacher-subject-list">
-                                        <?php foreach ($t['subjects'] as $ts): ?>
-                                            <li>
-                                                <span><strong style="color:var(--primary);"><?= htmlspecialchars($ts['code']) ?></strong> — <?= htmlspecialchars($ts['name']) ?></span>
-                                                <small style="color:var(--ink-muted);"><?= htmlspecialchars($ts['schedule']) ?></small>
-                                            </li>
-                                        <?php endforeach; ?>
-                                    </ul>
-                                </div>
-                            <?php endforeach; ?>
                         </div>
                     <?php endif; ?>
                 </section>
@@ -1255,7 +1113,7 @@ $stuInitials = count($stuNameParts) >= 2
                                                 <span style="margin-left:6px;font-weight:700;"><?= htmlspecialchars($log['subject_name']) ?></span>
                                             </td>
                                             <td><?= htmlspecialchars($log['professor_name']) ?></td>
-                                            <td><?= date('h:i A', strtotime($log['time_in'])) ?></td>
+                                            <td><?= school_format_time($log['time_in']) ?></td>
                                             <td>
                                                 <span class="status-badge <?= $badgeCl ?>">
                                                     <i class="fa-solid <?= $badgeCl === 'present' ? 'fa-check' : ($badgeCl === 'late' ? 'fa-clock' : 'fa-xmark') ?>"></i>

@@ -1,0 +1,385 @@
+{
+    "created_at": "2026-10-27T17:46:14+01:00",
+    "mapping": [
+        {
+            "id": 1,
+            "grade_level_id": 1,
+            "grade_name": "Grade 7",
+            "section_name": "Grade 7 - Section A",
+            "new_name": "Grade 7 - Emerald"
+        },
+        {
+            "id": 2,
+            "grade_level_id": 1,
+            "grade_name": "Grade 7",
+            "section_name": "Grade 7 - Section B",
+            "new_name": "Grade 7 - Jade"
+        },
+        {
+            "id": 3,
+            "grade_level_id": 1,
+            "grade_name": "Grade 7",
+            "section_name": "Grade 7 - Section C",
+            "new_name": "Grade 7 - Ruby"
+        },
+        {
+            "id": 4,
+            "grade_level_id": 2,
+            "grade_name": "Grade 8",
+            "section_name": "Grade 8 - Section A",
+            "new_name": "Grade 8 - Sapphire"
+        },
+        {
+            "id": 5,
+            "grade_level_id": 2,
+            "grade_name": "Grade 8",
+            "section_name": "Grade 8 - Section B",
+            "new_name": "Grade 8 - Topaz"
+        },
+        {
+            "id": 6,
+            "grade_level_id": 2,
+            "grade_name": "Grade 8",
+            "section_name": "Grade 8 - Section C",
+            "new_name": "Grade 8 - Amethyst"
+        },
+        {
+            "id": 7,
+            "grade_level_id": 3,
+            "grade_name": "Grade 9",
+            "section_name": "Grade 9 - Section A",
+            "new_name": "Grade 9 - Diamond"
+        },
+        {
+            "id": 8,
+            "grade_level_id": 3,
+            "grade_name": "Grade 9",
+            "section_name": "Grade 9 - Section B",
+            "new_name": "Grade 9 - Pearl"
+        },
+        {
+            "id": 9,
+            "grade_level_id": 4,
+            "grade_name": "Grade 10",
+            "section_name": "Grade 10 - Section A",
+            "new_name": "Grade 10 - Onyx"
+        },
+        {
+            "id": 10,
+            "grade_level_id": 4,
+            "grade_name": "Grade 10",
+            "section_name": "Grade 10 - Section B",
+            "new_name": "Grade 10 - Quartz"
+        }
+    ],
+    "users": [
+        {
+            "id": 1,
+            "grade_level": "",
+            "course_section": null
+        },
+        {
+            "id": 2,
+            "grade_level": "Grade 8",
+            "course_section": "Grade 8 - Section A"
+        },
+        {
+            "id": 3,
+            "grade_level": "Grade 8",
+            "course_section": "Grade 8 - Section A"
+        },
+        {
+            "id": 4,
+            "grade_level": "Grade 8",
+            "course_section": "Grade 8 - Section A"
+        },
+        {
+            "id": 5,
+            "grade_level": "Grade 8",
+            "course_section": "Grade 8 - Section B"
+        },
+        {
+            "id": 6,
+            "grade_level": "Grade 8",
+            "course_section": "Grade 8 - Section A"
+        },
+        {
+            "id": 7,
+            "grade_level": "Grade 9",
+            "course_section": "Grade 9 - Section A"
+        },
+        {
+            "id": 8,
+            "grade_level": "Grade 7",
+            "course_section": "Grade 7 - Section A"
+        },
+        {
+            "id": 9,
+            "grade_level": "Grade 10",
+            "course_section": "Grade 10 - Section A"
+        },
+        {
+            "id": 10,
+            "grade_level": "Grade 8",
+            "course_section": "Grade 8 - Section A"
+        },
+        {
+            "id": 11,
+            "grade_level": "Grade 9",
+            "course_section": "Grade 9 - Section A"
+        },
+        {
+            "id": 12,
+            "grade_level": "Grade 10",
+            "course_section": "Grade 10 - Section A"
+        },
+        {
+            "id": 13,
+            "grade_level": "Grade 7",
+            "course_section": "Grade 7 - Section A"
+        },
+        {
+            "id": 14,
+            "grade_level": "Grade 8",
+            "course_section": "Grade 8 - Section A"
+        },
+        {
+            "id": 15,
+            "grade_level": "Grade 9",
+            "course_section": "Grade 9 - Section A"
+        },
+        {
+            "id": 16,
+            "grade_level": "Grade 10",
+            "course_section": "Grade 10 - Section A"
+        },
+        {
+            "id": 17,
+            "grade_level": "Grade 7",
+            "course_section": "Grade 7 - Section A"
+        },
+        {
+            "id": 18,
+            "grade_level": "Grade 7",
+            "course_section": "Grade 7 - Section A"
+        },
+        {
+            "id": 19,
+            "grade_level": "Grade 8",
+            "course_section": "Grade 8 - Section C"
+        },
+        {
+            "id": 20,
+            "grade_level": "Grade 9",
+            "course_section": "Grade 9 - Section A"
+        },
+        {
+            "id": 21,
+            "grade_level": "Grade 10",
+            "course_section": "Grade 10 - Section A"
+        },
+        {
+            "id": 23,
+            "grade_level": "Grade 7",
+            "course_section": "Grade 7 - Section B"
+        },
+        {
+            "id": 24,
+            "grade_level": "Grade 10",
+            "course_section": "Grade 10 - Section B"
+        },
+        {
+            "id": 25,
+            "grade_level": "Grade 7",
+            "course_section": "Grade 7 - Section C"
+        },
+        {
+            "id": 26,
+            "grade_level": "Grade 7",
+            "course_section": "Grade 7 - Section A"
+        }
+    ],
+    "teachers": [
+        {
+            "id": 1,
+            "grade_level_id": 2,
+            "grade_level_name": "Grade 8",
+            "section_name": "Grade 8 - Section A"
+        },
+        {
+            "id": 2,
+            "grade_level_id": 3,
+            "grade_level_name": "Grade 9",
+            "section_name": "Grade 9 - Section A"
+        },
+        {
+            "id": 3,
+            "grade_level_id": 1,
+            "grade_level_name": "Grade 7",
+            "section_name": "Grade 7 - Section A"
+        },
+        {
+            "id": 4,
+            "grade_level_id": 4,
+            "grade_level_name": "Grade 10",
+            "section_name": "Grade 10 - Section A"
+        },
+        {
+            "id": 5,
+            "grade_level_id": 2,
+            "grade_level_name": "Grade 8",
+            "section_name": "Grade 8 - Section A"
+        },
+        {
+            "id": 6,
+            "grade_level_id": 3,
+            "grade_level_name": "Grade 9",
+            "section_name": "Grade 9 - Section A"
+        },
+        {
+            "id": 7,
+            "grade_level_id": 4,
+            "grade_level_name": "Grade 10",
+            "section_name": "Grade 10 - Section A"
+        },
+        {
+            "id": 8,
+            "grade_level_id": 1,
+            "grade_level_name": "Grade 7",
+            "section_name": "Grade 7 - Section A"
+        },
+        {
+            "id": 9,
+            "grade_level_id": 2,
+            "grade_level_name": "Grade 8",
+            "section_name": "Grade 8 - Section A"
+        },
+        {
+            "id": 10,
+            "grade_level_id": 3,
+            "grade_level_name": "Grade 9",
+            "section_name": "Grade 9 - Section A"
+        },
+        {
+            "id": 11,
+            "grade_level_id": 4,
+            "grade_level_name": "Grade 10",
+            "section_name": "Grade 10 - Section A"
+        },
+        {
+            "id": 12,
+            "grade_level_id": 1,
+            "grade_level_name": "Grade 7",
+            "section_name": "Grade 7 - Section A"
+        }
+    ],
+    "teacher_assignments": [
+        {
+            "id": 1,
+            "grade_level_id": 2,
+            "section_name": "Grade 8 - Section A"
+        },
+        {
+            "id": 2,
+            "grade_level_id": 3,
+            "section_name": "Grade 9 - Section A"
+        },
+        {
+            "id": 3,
+            "grade_level_id": 1,
+            "section_name": "Grade 7 - Section A"
+        },
+        {
+            "id": 4,
+            "grade_level_id": 4,
+            "section_name": "Grade 10 - Section A"
+        },
+        {
+            "id": 5,
+            "grade_level_id": 2,
+            "section_name": "Grade 8 - Section A"
+        },
+        {
+            "id": 6,
+            "grade_level_id": 3,
+            "section_name": "Grade 9 - Section A"
+        },
+        {
+            "id": 7,
+            "grade_level_id": 4,
+            "section_name": "Grade 10 - Section A"
+        },
+        {
+            "id": 8,
+            "grade_level_id": 1,
+            "section_name": "Grade 7 - Section A"
+        },
+        {
+            "id": 9,
+            "grade_level_id": 2,
+            "section_name": "Grade 8 - Section A"
+        },
+        {
+            "id": 10,
+            "grade_level_id": 3,
+            "section_name": "Grade 9 - Section A"
+        },
+        {
+            "id": 11,
+            "grade_level_id": 4,
+            "section_name": "Grade 10 - Section A"
+        },
+        {
+            "id": 12,
+            "grade_level_id": 1,
+            "section_name": "Grade 7 - Section A"
+        }
+    ],
+    "attendance_records": [
+        {
+            "id": 1,
+            "grade_level": "Grade 7",
+            "section_name": "Grade 7 - Section A"
+        },
+        {
+            "id": 2,
+            "grade_level": "Grade 8",
+            "section_name": "Grade 8 - Section A"
+        },
+        {
+            "id": 3,
+            "grade_level": "Grade 10",
+            "section_name": "Grade 10 - Section A"
+        },
+        {
+            "id": 4,
+            "grade_level": "Grade 8",
+            "section_name": "Grade 8 - Section A"
+        },
+        {
+            "id": 5,
+            "grade_level": "Grade 7",
+            "section_name": "Grade 7 - Section A"
+        },
+        {
+            "id": 6,
+            "grade_level": "Grade 9",
+            "section_name": "Grade 9 - Section A"
+        },
+        {
+            "id": 7,
+            "grade_level": "Grade 10",
+            "section_name": "Grade 10 - Section A"
+        },
+        {
+            "id": 8,
+            "grade_level": "Grade 10",
+            "section_name": "Grade 10 - Section B"
+        },
+        {
+            "id": 9,
+            "grade_level": "Grade 7",
+            "section_name": "Grade 7 - Section C"
+        }
+    ]
+}

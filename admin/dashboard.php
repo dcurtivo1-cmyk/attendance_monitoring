@@ -2,10 +2,13 @@
 // admin/dashboard.php
 require_once __DIR__ . '/../config/database.php';
 require_once __DIR__ . '/../config/auth_check.php';
+require_once __DIR__ . '/../config/student_sections.php';
+require_once __DIR__ . '/../config/student_account.php';
 
 require_auth(['admin']);
 $user = current_user();
 $pdo = get_db_connection();
+$_SESSION['create_student_csrf'] ??= bin2hex(random_bytes(32));
 
 $today = date('Y-m-d');
 $message = '';
@@ -20,6 +23,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     try {
         // 1. Quick Action: Add Student
         if ($action === 'quick_add_student') {
+            if (!is_string($_POST['csrf'] ?? null) || !hash_equals($_SESSION['create_student_csrf'], $_POST['csrf'])) {
+                throw new InvalidArgumentException('Your form expired. Refresh the page and try again.');
+            }
+            $password = STUDENT_DEFAULT_PASSWORD;
             $identifier       = trim($_POST['identifier'] ?? '');
             $first_name       = trim($_POST['first_name'] ?? '');
             $middle_initial   = trim($_POST['middle_initial'] ?? '');
@@ -36,20 +43,25 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $middle_initial = count($p) > 2 ? $p[1] : '';
             }
 
-            $grade_level      = trim($_POST['grade_level'] ?? 'Grade 8');
-            $course_section   = trim($_POST['course_section'] ?? 'Section A - Bonifacio');
+            $grade_level      = trim($_POST['grade_level'] ?? '');
+            $course_section   = trim($_POST['course_section'] ?? '');
             $email            = trim($_POST['email'] ?? '');
             $guardian_contact = trim($_POST['guardian_contact'] ?? '+63 917 123 4567');
 
+            $credentialError = student_account_credentials_error($email);
             if ($identifier === '' || ($first_name === '' && $name === '') || $email === '') {
-                $error = 'Student ID, Name, and Email are required.';
+                $error = 'Student ID, Name, and Student Login Email are required.';
+            } elseif ($credentialError !== null) {
+                $error = $credentialError;
+            } elseif (!is_valid_student_section(get_student_sections_by_grade($pdo), $grade_level, $course_section)) {
+                $error = 'Choose a section that belongs to the selected grade level. Refresh the page if sections have changed.';
             } else {
                 $dup = $pdo->prepare("SELECT id FROM users WHERE identifier = ? OR email = ? LIMIT 1");
                 $dup->execute([$identifier, $email]);
                 if ($dup->fetch()) {
                     $error = 'Student ID or Email already exists.';
                 } else {
-                    $hashedPass = password_hash('password123', PASSWORD_BCRYPT);
+                    $hashedPass = password_hash($password, PASSWORD_BCRYPT);
                     $qrToken = generate_qr_token($identifier);
                     $ins = $pdo->prepare("
                         INSERT INTO users (identifier, name, first_name, middle_initial, last_name, email, password, role, course_section, grade_level, guardian_contact, student_subtitle, status, qr_token)
@@ -67,7 +79,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         WHERE gl.grade_name = ?
                     ")->execute([$newStuId, $grade_level]);
 
-                    $message = "Student '$name' ($identifier) added and enrolled in $grade_level subjects!";
+                    $notification = student_account_notification($email, $name);
+                    $message = "Student record and login account created for $name ($identifier), and enrolled in $grade_level subjects. " . $notification['message'];
                 }
             }
         }
@@ -79,12 +92,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $department_code  = trim($_POST['department_code'] ?? 'FACULTY');
             $grade_level_name = trim($_POST['grade_level_name'] ?? 'Grade 7');
             $subject_name     = trim($_POST['subject_name'] ?? 'English');
-            $section_name     = trim($_POST['section_name'] ?? 'Section A - Rizal');
+            $section_name     = trim($_POST['section_name'] ?? 'No section assigned');
             $email            = trim($_POST['email'] ?? '');
             $contact_number   = trim($_POST['contact_number'] ?? '');
 
             if ($teacher_id === '' || $full_name === '' || $email === '') {
                 $error = 'Teacher ID, Full Name, and Email are required.';
+            } elseif (!is_valid_student_section(get_student_sections_by_grade($pdo), $grade_level_name, $section_name)) {
+                $error = 'Choose a section that belongs to the selected grade level.';
             } else {
                 $dup = $pdo->prepare("SELECT id FROM teachers WHERE teacher_id = ? OR email = ? LIMIT 1");
                 $dup->execute([$teacher_id, $email]);
@@ -114,6 +129,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     ");
                     $ins->execute([$uId, $teacher_id, $full_name, $department_code, $gId, $sId, $grade_level_name, $subject_name, $section_name, $email, $contact_number]);
                     $newTId = (int)$pdo->lastInsertId();
+                    sync_teacher_user_section($pdo, $newTId);
 
                     if ($uId && $sId) {
                         $pdo->prepare("UPDATE subjects SET professor_id = ? WHERE id = ?")->execute([$uId, $sId]);
@@ -126,6 +142,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 }
             }
         }
+    } catch (InvalidArgumentException $e) {
+        $error = $e->getMessage();
     } catch (PDOException $e) {
         $error = 'Database error: ' . $e->getMessage();
     }
@@ -204,6 +222,7 @@ $gradeCards = [
 
 $nextTeacherIdCode = get_next_teacher_id($pdo);
 $nextStudentIdCode = get_next_student_id($pdo);
+$studentSectionsByGrade = get_student_sections_by_grade($pdo);
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -296,6 +315,21 @@ $nextStudentIdCode = get_next_student_id($pdo);
             font-size: 1.15rem;
             flex-shrink: 0;
             box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
+        }
+
+        .sidebar-logo {
+            box-sizing: border-box;
+            overflow: hidden;
+            padding: 2px;
+            background: #ffffff;
+        }
+
+        .sidebar-logo img {
+            display: block;
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+            border-radius: 50%;
         }
 
         .sidebar-brand-text {
@@ -1051,6 +1085,7 @@ $nextStudentIdCode = get_next_student_id($pdo);
                 <i class="fa-solid fa-chalkboard-user"></i>
                 <span>Teachers</span>
             </a>
+            <a href="subject_editing.php" class="nav-item"><i class="fa-solid fa-book-open"></i><span>Subjects &amp; Sections</span></a>
             <a href="attendance.php" class="nav-item">
                 <i class="fa-solid fa-clipboard-check"></i>
                 <span>Attendance</span>
@@ -1097,6 +1132,12 @@ $nextStudentIdCode = get_next_student_id($pdo);
         </header>
 
         <main class="dashboard-container">
+            <?php $mailConfig = get_email_config(); if (empty($mailConfig['smtp_user']) || empty($mailConfig['smtp_pass'])): ?>
+                <div class="alert-banner error" role="alert">
+                    <span><strong>Student emails cannot be sent yet.</strong> Connect the sender Gmail and Google App Password to enable automatic account emails. <a href="email_settings.php" style="font-weight:700;text-decoration:underline;">Set up Gmail sender</a></span>
+                </div>
+            <?php endif; ?>
+            <p style="margin-bottom:16px;"><a href="email_settings.php">Email Settings &amp; resend student login email</a></p>
             <?php if ($message !== ''): ?>
                 <div class="alert-banner success">
                     <span><i class="fa-solid fa-circle-check"></i> <?= htmlspecialchars($message) ?></span>
@@ -1223,6 +1264,18 @@ $nextStudentIdCode = get_next_student_id($pdo);
             <section class="modules-grid">
                 <div class="module-card">
                     <div>
+                        <div class="module-icon"><i class="fa-solid fa-book-open"></i></div>
+                        <h4>Subjects &amp; Sections</h4>
+                        <p>Edit subject codes, subject names, and section names by grade level.</p>
+                    </div>
+                    <a href="subject_editing.php" class="module-btn">
+                        <span>Edit Subjects &amp; Sections</span>
+                        <i class="fa-solid fa-arrow-right"></i>
+                    </a>
+                </div>
+
+                <div class="module-card">
+                    <div>
                         <div class="module-icon"><i class="fa-solid fa-user-graduate"></i></div>
                         <h4>Student Records</h4>
                         <p>Manage student profiles, grade levels, sections, and assigned subjects.</p>
@@ -1310,6 +1363,8 @@ $nextStudentIdCode = get_next_student_id($pdo);
         </div>
         <form method="POST" action="dashboard.php">
             <input type="hidden" name="action" value="quick_add_student">
+            <input type="hidden" name="csrf" value="<?= htmlspecialchars($_SESSION['create_student_csrf'], ENT_QUOTES, 'UTF-8') ?>">
+            <p style="margin-bottom:16px;">Create the student record and login account. Login details will be sent to the student email below.</p>
             <div class="form-field" style="margin-bottom:12px;">
                 <label>Student ID *</label>
                 <input type="text" name="identifier" class="form-input" value="<?= htmlspecialchars($nextStudentIdCode) ?>" required>
@@ -1330,32 +1385,39 @@ $nextStudentIdCode = get_next_student_id($pdo);
             </div>
             <div class="form-row-2">
                 <div class="form-field">
-                    <label>Grade Level *</label>
-                    <select name="grade_level" class="form-input" required>
-                        <option value="Grade 7">Grade 7</option>
-                        <option value="Grade 8" selected>Grade 8</option>
-                        <option value="Grade 9">Grade 9</option>
-                        <option value="Grade 10">Grade 10</option>
+                    <label for="quick_stu_grade">Grade Level *</label>
+                    <select name="grade_level" id="quick_stu_grade" class="form-input" required data-student-grade>
+                        <option value="">Choose a grade level</option>
+                        <?php foreach ($studentSectionsByGrade as $gradeName => $gradeSections): ?>
+                        <option value="<?= htmlspecialchars($gradeName, ENT_QUOTES, 'UTF-8') ?>"><?= htmlspecialchars($gradeName) ?></option>
+                        <?php endforeach; ?>
                     </select>
                 </div>
                 <div class="form-field">
-                    <label>Section *</label>
-                    <input type="text" name="course_section" class="form-input" placeholder="e.g. Section A - Bonifacio" value="Section A - Bonifacio" required>
+                    <label for="quick_stu_section">Section *</label>
+                    <select name="course_section" id="quick_stu_section" class="form-input" required disabled data-student-section aria-describedby="quick_stu_section_help"><option value="">Choose a grade level first</option></select>
+                    <small id="quick_stu_section_help" data-section-help aria-live="polite" style="display:block;margin-top:6px;">Select a grade level to see its sections.</small>
                 </div>
             </div>
             <div class="form-row-2">
                 <div class="form-field">
-                    <label>Email Address *</label>
-                    <input type="email" name="email" class="form-input" placeholder="student@gmail.com" required>
+                    <label for="quick_student_email">Student Login Email *</label>
+                    <input type="email" id="quick_student_email" name="email" class="form-input" placeholder="student@gmail.com" maxlength="100" autocomplete="off" required>
+                    <small>Receives login details; also used for sign-in and password recovery.</small>
                 </div>
                 <div class="form-field">
                     <label>Guardian Contact *</label>
                     <input type="text" name="guardian_contact" class="form-input" value="+63 917 123 4567" required>
                 </div>
             </div>
+            <fieldset style="padding:14px;border:1px solid #dce7e2;border-radius:12px;margin-top:16px;">
+                <legend style="padding:0 6px;font-weight:700;">Student account password</legend>
+                <p>Default password: <strong><?= htmlspecialchars(STUDENT_DEFAULT_PASSWORD) ?></strong></p>
+                <small>The website link, email, and default password will be emailed to the student. They may change their password anytime in Profile.</small>
+            </fieldset>
             <div class="modal-actions">
                 <button type="button" class="btn-cancel" onclick="closeModal('addStudentQuickModal')">Cancel</button>
-                <button type="submit" class="btn-save">Save Student</button>
+                <button type="submit" class="btn-save">Create Student &amp; Account</button>
             </div>
         </form>
     </div>
@@ -1384,12 +1446,12 @@ $nextStudentIdCode = get_next_student_id($pdo);
             </div>
             <div class="form-field">
                 <label>Full Name *</label>
-                <input type="text" name="full_name" class="form-input" placeholder="e.g. Mr. John Angac" required>
+                <input type="text" name="full_name" class="form-input" placeholder="e.g. John Angac" required>
             </div>
             <div class="form-row-2">
                 <div class="form-field">
                     <label>Grade Level *</label>
-                    <select name="grade_level_name" class="form-input" required>
+                    <select name="grade_level_name" class="form-input" required data-student-grade>
                         <option value="Grade 7">Grade 7</option>
                         <option value="Grade 8">Grade 8</option>
                         <option value="Grade 9">Grade 9</option>
@@ -1407,7 +1469,7 @@ $nextStudentIdCode = get_next_student_id($pdo);
             </div>
             <div class="form-field">
                 <label>Section Handled *</label>
-                <input type="text" name="section_name" class="form-input" placeholder="e.g. Section A - Rizal" value="Section A - Rizal" required>
+                <select name="section_name" class="form-input" required data-student-section></select>
             </div>
             <div class="form-row-2">
                 <div class="form-field">
@@ -1444,5 +1506,7 @@ function openGradeModal(gradeName) {
 }
 </script>
 
+<script type="application/json" id="student-sections-data"><?= json_encode((object)$studentSectionsByGrade, JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) ?></script>
+<script src="../assets/js/student-sections.js"></script>
 </body>
 </html>

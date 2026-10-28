@@ -3,8 +3,8 @@
 -- Student & Teacher Attendance Monitoring System Database Schema
 -- =========================================================================
 
--- CREATE DATABASE IF NOT EXISTS `attendance_db` DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
--- USE `attendance_db`;
+CREATE DATABASE IF NOT EXISTS `attendance_db` DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+USE `attendance_db`;
 
 -- 1. Grade Levels Table
 CREATE TABLE IF NOT EXISTS `grade_levels` (
@@ -24,7 +24,7 @@ CREATE TABLE IF NOT EXISTS `users` (
     `email` VARCHAR(100) NOT NULL UNIQUE,
     `password` VARCHAR(255) NOT NULL,
     `role` ENUM('student', 'professor', 'admin') NOT NULL DEFAULT 'student',
-    `course_section` VARCHAR(50) NULL COMMENT 'e.g. Section A - Bonifacio',
+    `course_section` VARCHAR(50) NULL COMMENT 'e.g. Grade 8 - Sapphire',
     `grade_level` VARCHAR(50) NULL DEFAULT 'Grade 8',
     `guardian_contact` VARCHAR(50) NULL DEFAULT '+63 917 123 4567',
     `student_subtitle` VARCHAR(50) NULL,
@@ -74,7 +74,7 @@ CREATE TABLE IF NOT EXISTS `attendance` (
     `student_id` INT NOT NULL,
     `subject_id` INT NOT NULL,
     `date` DATE NOT NULL,
-    `time_in` TIME NOT NULL,
+    `time_in` TIME NULL DEFAULT NULL,
     `status` ENUM('Present', 'Late', 'Absent', 'Excused') NOT NULL DEFAULT 'Present',
     `scanned_by` INT NULL COMMENT 'Professor ID who scanned or verified',
     `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -94,7 +94,7 @@ CREATE TABLE IF NOT EXISTS `teachers` (
     `subject_id` INT NULL,
     `grade_level_name` VARCHAR(50) NOT NULL,
     `subject_name` VARCHAR(100) NOT NULL,
-    `section_name` VARCHAR(50) DEFAULT 'Section A - Rizal',
+    `section_name` VARCHAR(50) DEFAULT 'Grade 7 - Emerald',
     `email` VARCHAR(100) NOT NULL UNIQUE,
     `contact_number` VARCHAR(50) DEFAULT '+63 917 123 4567',
     `status` ENUM('Active', 'Inactive') DEFAULT 'Active',
@@ -134,6 +134,18 @@ CREATE TABLE IF NOT EXISTS `teacher_attendance` (
     FOREIGN KEY (`teacher_id`) REFERENCES `teachers`(`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+-- 10. Password Resets Table
+CREATE TABLE IF NOT EXISTS `password_resets` (
+    `id` INT AUTO_INCREMENT PRIMARY KEY,
+    `email` VARCHAR(100) NOT NULL,
+    `token_hash` VARCHAR(64) NOT NULL,
+    `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    `expires_at` DATETIME NOT NULL,
+    `used_at` DATETIME NULL,
+    INDEX `idx_email` (`email`),
+    INDEX `idx_token_hash` (`token_hash`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
 -- =========================================================================
 -- INITIAL SEED DATA
 -- Default password for all seed accounts: password123
@@ -154,12 +166,12 @@ INSERT INTO `users` (`id`, `identifier`, `name`, `first_name`, `middle_initial`,
 (3, 'PROF-2026-002', 'Mr. John Angac', 'John', 'B.', 'Angac', 'john.angac@school.edu.ph', '$2y$10$hWvMSDk54XvI2SLszIYFV.L8Yr4nhlnoX8uV5XSHb7TDtjKn35PuW', 'professor', NULL, NULL, 'PROF_TOKEN_JOHN_002'),
 (4, 'PROF-2026-003', 'Mr. Marco Villanueva', 'Marco', 'V.', 'Villanueva', 'marco.v@school.edu.ph', '$2y$10$hWvMSDk54XvI2SLszIYFV.L8Yr4nhlnoX8uV5XSHb7TDtjKn35PuW', 'professor', NULL, NULL, 'PROF_TOKEN_MARCO_003'),
 (5, 'PROF-2026-004', 'Ma\'am Rea Santos', 'Rea', 'S.', 'Santos', 'rea.santos@school.edu.ph', '$2y$10$hWvMSDk54XvI2SLszIYFV.L8Yr4nhlnoX8uV5XSHb7TDtjKn35PuW', 'professor', NULL, NULL, 'PROF_TOKEN_REA_004'),
-(6, 'STUD-2026-001', 'Juan Dela Cruz', 'Juan', 'M.', 'Dela Cruz', 'juan.delacruz@student.edu.ph', '$2y$10$hWvMSDk54XvI2SLszIYFV.L8Yr4nhlnoX8uV5XSHb7TDtjKn35PuW', 'student', 'Section A - Rizal', 'Grade 7', 'STU_QR_JUAN_001'),
-(7, 'STUD-2026-002', 'Maria Santos', 'Maria', 'S.', 'Santos', 'maria.santos@student.edu.ph', '$2y$10$hWvMSDk54XvI2SLszIYFV.L8Yr4nhlnoX8uV5XSHb7TDtjKn35PuW', 'student', 'Section A - Bonifacio', 'Grade 8', 'STU_QR_MARIA_002'),
-(8, 'STUD-2026-003', 'Edcel Ventura', 'Edcel', 'V.', 'Ventura', 'edcel.ventura@student.edu.ph', '$2y$10$hWvMSDk54XvI2SLszIYFV.L8Yr4nhlnoX8uV5XSHb7TDtjKn35PuW', 'student', 'Section A - Mabini', 'Grade 9', 'STU_QR_EDCEL_003'),
-(9, 'STUD-2026-004', 'Ryan Garcia', 'Ryan', 'G.', 'Garcia', 'ryan.garcia@student.edu.ph', '$2y$10$hWvMSDk54XvI2SLszIYFV.L8Yr4nhlnoX8uV5XSHb7TDtjKn35PuW', 'student', 'Section A - Luna', 'Grade 10', 'STU_QR_RYAN_004'),
-(10, 'STUD-2026-005', 'Luna Dela Cruz', 'Luna', 'D.', 'Dela Cruz', 'luna.delacruz@student.edu.ph', '$2y$10$hWvMSDk54XvI2SLszIYFV.L8Yr4nhlnoX8uV5XSHb7TDtjKn35PuW', 'student', 'Section A - Rizal', 'Grade 7', 'STU_QR_LUNA_005'),
-(11, 'STUD-2026-006', 'Ana Reyes', 'Ana', 'R.', 'Reyes', 'ana.reyes@student.edu.ph', '$2y$10$hWvMSDk54XvI2SLszIYFV.L8Yr4nhlnoX8uV5XSHb7TDtjKn35PuW', 'student', 'Section B - Del Pilar', 'Grade 10', 'STU_QR_ANA_006')
+(6, 'STUD-2026-001', 'Juan Dela Cruz', 'Juan', 'M.', 'Dela Cruz', 'juan.delacruz@student.edu.ph', '$2y$10$hWvMSDk54XvI2SLszIYFV.L8Yr4nhlnoX8uV5XSHb7TDtjKn35PuW', 'student', 'Grade 7 - Emerald', 'Grade 7', 'STU_QR_JUAN_001'),
+(7, 'STUD-2026-002', 'Maria Santos', 'Maria', 'S.', 'Santos', 'maria.santos@student.edu.ph', '$2y$10$hWvMSDk54XvI2SLszIYFV.L8Yr4nhlnoX8uV5XSHb7TDtjKn35PuW', 'student', 'Grade 8 - Sapphire', 'Grade 8', 'STU_QR_MARIA_002'),
+(8, 'STUD-2026-003', 'Edcel Ventura', 'Edcel', 'V.', 'Ventura', 'edcel.ventura@student.edu.ph', '$2y$10$hWvMSDk54XvI2SLszIYFV.L8Yr4nhlnoX8uV5XSHb7TDtjKn35PuW', 'student', 'Grade 9 - Diamond', 'Grade 9', 'STU_QR_EDCEL_003'),
+(9, 'STUD-2026-004', 'Ryan Garcia', 'Ryan', 'G.', 'Garcia', 'ryan.garcia@student.edu.ph', '$2y$10$hWvMSDk54XvI2SLszIYFV.L8Yr4nhlnoX8uV5XSHb7TDtjKn35PuW', 'student', 'Grade 10 - Onyx', 'Grade 10', 'STU_QR_RYAN_004'),
+(10, 'STUD-2026-005', 'Luna Dela Cruz', 'Luna', 'D.', 'Dela Cruz', 'luna.delacruz@student.edu.ph', '$2y$10$hWvMSDk54XvI2SLszIYFV.L8Yr4nhlnoX8uV5XSHb7TDtjKn35PuW', 'student', 'Grade 7 - Emerald', 'Grade 7', 'STU_QR_LUNA_005'),
+(11, 'STUD-2026-006', 'Ana Reyes', 'Ana', 'R.', 'Reyes', 'ana.reyes@student.edu.ph', '$2y$10$hWvMSDk54XvI2SLszIYFV.L8Yr4nhlnoX8uV5XSHb7TDtjKn35PuW', 'student', 'Grade 10 - Quartz', 'Grade 10', 'STU_QR_ANA_006')
 ON DUPLICATE KEY UPDATE `id` = VALUES(`id`);
 
 -- Core Subjects
@@ -194,21 +206,21 @@ ON DUPLICATE KEY UPDATE `subject_id` = VALUES(`subject_id`);
 
 -- Teachers Directory
 INSERT INTO `teachers` (`id`, `user_id`, `teacher_id`, `full_name`, `department_code`, `grade_level_id`, `subject_id`, `grade_level_name`, `subject_name`, `section_name`, `email`, `contact_number`, `status`) VALUES
-(1, 2, 'TCH-2026-001', 'Teacher Juan Dela Cruz', 'FACULTY', 2, 5, 'Grade 8', 'Araling Panlipunan', 'Section A - Bonifacio', 'teacher.juan@school.edu.ph', '+63 917 123 4567', 'Active'),
-(2, 3, 'TCH-2026-002', 'Mr. John Angac', 'FACULTY', 2, 8, 'Grade 8', 'Computer', 'Section A - Bonifacio', 'john.angac@school.edu.ph', '+63 917 234 5678', 'Active'),
-(3, 4, 'TCH-2026-003', 'Mr. Marco Villanueva', 'FACULTY', 2, 2, 'Grade 8', 'Mathematics', 'Section A - Bonifacio', 'marco.v@school.edu.ph', '+63 917 345 6789', 'Active'),
-(4, 5, 'TCH-2026-004', 'Ma\'am Rea Santos', 'FACULTY', 2, 3, 'Grade 8', 'Science', 'Section A - Bonifacio', 'rea.santos@school.edu.ph', '+63 917 456 7890', 'Active')
+(1, 2, 'TCH-2026-001', 'Teacher Juan Dela Cruz', 'FACULTY', 2, 5, 'Grade 8', 'Araling Panlipunan', 'Grade 8 - Sapphire', 'teacher.juan@school.edu.ph', '+63 917 123 4567', 'Active'),
+(2, 3, 'TCH-2026-002', 'Mr. John Angac', 'FACULTY', 2, 8, 'Grade 8', 'Computer', 'Grade 8 - Sapphire', 'john.angac@school.edu.ph', '+63 917 234 5678', 'Active'),
+(3, 4, 'TCH-2026-003', 'Mr. Marco Villanueva', 'FACULTY', 2, 2, 'Grade 8', 'Mathematics', 'Grade 8 - Sapphire', 'marco.v@school.edu.ph', '+63 917 345 6789', 'Active'),
+(4, 5, 'TCH-2026-004', 'Ma\'am Rea Santos', 'FACULTY', 2, 3, 'Grade 8', 'Science', 'Grade 8 - Sapphire', 'rea.santos@school.edu.ph', '+63 917 456 7890', 'Active')
 ON DUPLICATE KEY UPDATE `id` = VALUES(`id`);
 
 -- Teacher Assignments
 INSERT INTO `teacher_assignments` (`teacher_id`, `grade_level_id`, `subject_id`, `subject_name`, `section_name`) VALUES
-(1, 2, 5, 'Araling Panlipunan', 'Section A - Bonifacio'),
-(1, 2, 1, 'English', 'Section A - Bonifacio'),
-(1, 2, 4, 'Filipino', 'Section A - Bonifacio'),
-(1, 4, 11, 'Araling Panlipunan', 'Section B - Del Pilar'),
-(2, 2, 8, 'Computer', 'Section A - Bonifacio'),
-(3, 2, 2, 'Mathematics', 'Section A - Bonifacio'),
-(4, 2, 3, 'Science', 'Section A - Bonifacio')
+(1, 2, 5, 'Araling Panlipunan', 'Grade 8 - Sapphire'),
+(1, 2, 1, 'English', 'Grade 8 - Sapphire'),
+(1, 2, 4, 'Filipino', 'Grade 8 - Sapphire'),
+(1, 4, 11, 'Araling Panlipunan', 'Grade 10 - Quartz'),
+(2, 2, 8, 'Computer', 'Grade 8 - Sapphire'),
+(3, 2, 2, 'Mathematics', 'Grade 8 - Sapphire'),
+(4, 2, 3, 'Science', 'Grade 8 - Sapphire')
 ON DUPLICATE KEY UPDATE `teacher_id` = VALUES(`teacher_id`);
 
 -- Teacher Attendance Logs (For Admin Portal Teacher Attendance)
@@ -234,3 +246,53 @@ INSERT INTO `attendance` (`student_id`, `subject_id`, `date`, `time_in`, `status
 (7, 1, CURDATE(), '07:31:00', 'Present', 2),
 (11, 11, CURDATE(), '13:02:00', 'Present', 2)
 ON DUPLICATE KEY UPDATE `student_id` = VALUES(`student_id`);
+
+
+-- Password recovery using emailed OTP codes
+CREATE TABLE IF NOT EXISTS `password_reset_otps` (
+    `request_id` CHAR(64) PRIMARY KEY,
+    `user_id` INT NOT NULL,
+    `otp_hash` VARCHAR(255) NOT NULL,
+    `created_at` BIGINT NOT NULL,
+    `expires_at` BIGINT NOT NULL,
+    `attempts` INT NOT NULL DEFAULT 0,
+    `verified_at` BIGINT NULL,
+    `used_at` BIGINT NULL,
+    INDEX `idx_otp_user_created` (`user_id`, `created_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- Canonical sections remain available even without enrolled students.
+CREATE TABLE IF NOT EXISTS school_sections (
+ id INT AUTO_INCREMENT PRIMARY KEY, grade_level_id INT NOT NULL, section_name VARCHAR(50) NOT NULL,
+ UNIQUE KEY unique_grade_section (grade_level_id, section_name),
+ FOREIGN KEY (grade_level_id) REFERENCES grade_levels(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+INSERT IGNORE INTO school_sections (grade_level_id, section_name)
+SELECT id, 'Grade 7 - Emerald' FROM grade_levels WHERE grade_name = 'Grade 7';
+INSERT IGNORE INTO school_sections (grade_level_id, section_name)
+SELECT id, 'Grade 7 - Jade' FROM grade_levels WHERE grade_name = 'Grade 7';
+INSERT IGNORE INTO school_sections (grade_level_id, section_name)
+SELECT id, 'Grade 7 - Ruby' FROM grade_levels WHERE grade_name = 'Grade 7';
+INSERT IGNORE INTO school_sections (grade_level_id, section_name)
+SELECT id, 'Grade 8 - Sapphire' FROM grade_levels WHERE grade_name = 'Grade 8';
+INSERT IGNORE INTO school_sections (grade_level_id, section_name)
+SELECT id, 'Grade 8 - Topaz' FROM grade_levels WHERE grade_name = 'Grade 8';
+INSERT IGNORE INTO school_sections (grade_level_id, section_name)
+SELECT id, 'Grade 8 - Amethyst' FROM grade_levels WHERE grade_name = 'Grade 8';
+INSERT IGNORE INTO school_sections (grade_level_id, section_name)
+SELECT id, 'Grade 9 - Diamond' FROM grade_levels WHERE grade_name = 'Grade 9';
+INSERT IGNORE INTO school_sections (grade_level_id, section_name)
+SELECT id, 'Grade 9 - Pearl' FROM grade_levels WHERE grade_name = 'Grade 9';
+INSERT IGNORE INTO school_sections (grade_level_id, section_name)
+SELECT id, 'Grade 10 - Onyx' FROM grade_levels WHERE grade_name = 'Grade 10';
+INSERT IGNORE INTO school_sections (grade_level_id, section_name)
+SELECT id, 'Grade 10 - Quartz' FROM grade_levels WHERE grade_name = 'Grade 10';
+
+
+-- Automatic Absent processing starts on the day the feature is enabled.
+CREATE TABLE IF NOT EXISTS automatic_attendance_state (
+    id TINYINT PRIMARY KEY,
+    enabled_at DATETIME NOT NULL,
+    last_processed_date DATE NOT NULL
+) ENGINE=InnoDB;
+-- Run scripts/install_auto_absent.php to install the one-minute database event.

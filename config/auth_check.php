@@ -1,6 +1,7 @@
 <?php
 // config/auth_check.php
 require_once __DIR__ . '/database.php';
+require_once __DIR__ . '/professor_names.php';
 
 function is_logged_in() {
     return isset($_SESSION['user_id']) && !empty($_SESSION['user_id']);
@@ -13,7 +14,9 @@ function current_user() {
     return [
         'id'             => $_SESSION['user_id'] ?? null,
         'identifier'     => $_SESSION['user_identifier'] ?? null,
-        'name'           => $_SESSION['user_name'] ?? null,
+        'name'           => ($_SESSION['user_role'] ?? '') === 'professor'
+            ? professor_display_name($_SESSION['user_name'] ?? null)
+            : ($_SESSION['user_name'] ?? null),
         'email'          => $_SESSION['user_email'] ?? null,
         'role'           => $_SESSION['user_role'] ?? null,
         'course_section' => $_SESSION['course_section'] ?? null,

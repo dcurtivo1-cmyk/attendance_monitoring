@@ -6,6 +6,9 @@ require_once __DIR__ . '/../config/auth_check.php';
 require_auth(['professor', 'admin']);
 $user = current_user();
 $pdo = get_db_connection();
+$accountStmt = $pdo->prepare('SELECT id, name, email, identifier FROM users WHERE id = ?');
+$accountStmt->execute([$user['id']]);
+$teacherAccount = $accountStmt->fetch(PDO::FETCH_ASSOC) ?: $user;
 $prof_id = $user['id'];
 
 // Get all subjects
@@ -26,7 +29,7 @@ $query = "
     FROM attendance a
     JOIN users u ON a.student_id = u.id
     JOIN subjects s ON a.subject_id = s.id
-    WHERE a.scanned_by = :prof_id
+    WHERE COALESCE(a.scanned_by, s.professor_id) = :prof_id
       AND a.date BETWEEN :start_date AND :end_date
 ";
 $params = [
@@ -64,11 +67,11 @@ if (isset($_GET['export']) && $_GET['export'] === 'csv') {
             $i++,
             $row['student_id_number'],
             $row['student_name'],
-            $row['course_section'] ?? 'Section A - Bonifacio',
+            $row['course_section'] ?? 'No section assigned',
             $row['subject_code'],
             $row['subject_name'],
             $row['date'],
-            date('h:i A', strtotime($row['time_in'])),
+            school_format_time($row['time_in']),
             $row['status']
         ]);
     }
@@ -76,8 +79,8 @@ if (isset($_GET['export']) && $_GET['export'] === 'csv') {
     exit;
 }
 
-$profDisplayName = preg_replace('/^Prof\.?\s+/i', 'Teacher ', trim($user['name'] ?? 'Teacher'));
-$profParts = preg_split('/\s+/', trim(str_replace(['Teacher', 'Prof.', 'Mr.', 'Ms.', 'Mrs.', "Ma'am", 'Sir'], '', $profDisplayName)));
+$profDisplayName = professor_display_name($teacherAccount['name'] ?? null);
+$profParts = preg_split('/\s+/', $profDisplayName);
 $profParts = array_values(array_filter($profParts));
 $profInitials = count($profParts) >= 2
     ? strtoupper(substr($profParts[0], 0, 1) . substr($profParts[1], 0, 1))
@@ -307,6 +310,7 @@ $profInitials = count($profParts) >= 2
             .sidebar { width: 100% !important; min-width: 100% !important; max-width: 100% !important; position: relative; height: auto; }
         }
     </style>
+    <link rel="stylesheet" href="../assets/css/teacher-account.css">
 </head>
 <body>
 
@@ -338,14 +342,14 @@ $profInitials = count($profParts) >= 2
                 <i class="fa-solid fa-chart-line"></i>
                 <span>Attendance Reports</span>
             </a>
+            <a href="profile.php" class="nav-link">
+                <i class="fa-solid fa-user-gear"></i>
+                <span>Profile</span>
+            </a>
         </nav>
 
         <div class="sidebar-footer">
-            <div class="prof-card">
-                <small>Teacher Account</small>
-                <strong><?= htmlspecialchars($profDisplayName) ?></strong>
-                <div style="font-size:0.76rem;color:rgba(255,255,255,0.72);margin-top:3px;">ID: <?= htmlspecialchars($user['identifier']) ?></div>
-            </div>
+            <?php require __DIR__ . '/../views/teacher_account_card.php'; ?>
         </div>
     </aside>
 
@@ -360,13 +364,7 @@ $profInitials = count($profParts) >= 2
                     <i class="fa-solid fa-right-from-bracket"></i>
                     <span>Logout</span>
                 </a>
-                <div class="profile-pill">
-                    <div class="avatar-circle"><?= htmlspecialchars($profInitials) ?></div>
-                    <div class="profile-meta">
-                        <strong><?= htmlspecialchars($profDisplayName) ?></strong>
-                        <small>Teacher / Faculty</small>
-                    </div>
-                </div>
+                <?php require __DIR__ . '/../views/teacher_header_profile.php'; ?>
             </div>
         </header>
 
@@ -471,12 +469,12 @@ $profInitials = count($profParts) >= 2
                                         <td><strong><?= date('M d, Y', strtotime($row['date'])) ?></strong></td>
                                         <td><?= htmlspecialchars($row['student_id_number']) ?></td>
                                         <td><strong><?= htmlspecialchars($row['student_name']) ?></strong></td>
-                                        <td><?= htmlspecialchars($row['course_section'] ?: 'Section A - Bonifacio') ?></td>
+                                        <td><?= htmlspecialchars($row['course_section'] ?: 'No section assigned') ?></td>
                                         <td>
                                             <span style="font-weight:700;color:var(--primary);"><?= htmlspecialchars($row['subject_code']) ?></span>
                                             <div style="font-size:0.75rem;color:var(--ink-muted);"><?= htmlspecialchars($row['subject_name']) ?></div>
                                         </td>
-                                        <td><?= date('h:i A', strtotime($row['time_in'])) ?></td>
+                                        <td><?= school_format_time($row['time_in']) ?></td>
                                         <td>
                                             <span class="status-badge <?= $stBadge ?>">
                                                 <i class="fa-solid <?= $stBadge === 'present' ? 'fa-check' : ($stBadge === 'late' ? 'fa-clock' : 'fa-xmark') ?>"></i>

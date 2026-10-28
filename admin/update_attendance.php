@@ -123,7 +123,7 @@ try {
         'message' => "Updated {$teacher['full_name']}'s attendance to {$newStatus}.",
         'record'  => [
             'teacher_id'    => $teacherId,
-            'teacher_name'  => $teacher['full_name'],
+            'teacher_name'  => professor_display_name($teacher['full_name']),
             'status'        => $newStatus,
             'time_in'       => substr($finalTimeIn, 0, 5),
             'time_out'      => substr($finalTimeOut, 0, 5),

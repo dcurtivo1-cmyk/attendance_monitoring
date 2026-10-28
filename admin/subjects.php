@@ -2,53 +2,45 @@
 // admin/subjects.php
 require_once __DIR__ . '/../config/database.php';
 require_once __DIR__ . '/../config/auth_check.php';
+require_once __DIR__ . '/../config/subject_creation.php';
 
 require_auth(['admin']);
 $user = current_user();
 $pdo = get_db_connection();
 
+$_SESSION['create_subject_csrf'] ??= bin2hex(random_bytes(32));
 $error = '';
-$success = '';
-
-// Handle Reassign / Add Subject if submitted by Admin
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'add_subject') {
-    $subject_code = trim($_POST['subject_code'] ?? '');
-    $subject_name = trim($_POST['subject_name'] ?? '');
-    $professor_id = intval($_POST['professor_id'] ?? 0);
-    $day_of_week  = trim($_POST['day_of_week'] ?? 'Monday');
-    $start_time   = trim($_POST['start_time'] ?? '08:00');
-    $end_time     = trim($_POST['end_time'] ?? '11:00');
-    $late_thresh  = intval($_POST['late_threshold'] ?? 15);
-
-    if (empty($subject_code) || empty($subject_name) || $professor_id <= 0) {
-        $error = "Subject Code, Name, and an assigned Professor are required.";
-    } else {
-        try {
-            $stmt = $pdo->prepare("INSERT INTO subjects (subject_code, subject_name, professor_id) VALUES (?, ?, ?)");
-            $stmt->execute([$subject_code, $subject_name, $professor_id]);
-            $subId = $pdo->lastInsertId();
-
-            $sched = $pdo->prepare("INSERT INTO schedules (subject_id, day_of_week, start_time, end_time, late_threshold_mins) VALUES (?, ?, ?, ?, ?)");
-            $sched->execute([$subId, $day_of_week, $start_time, $end_time, $late_thresh]);
-
-            $success = "Subject <strong>$subject_code</strong> successfully created and assigned!";
-        } catch (PDOException $e) {
-            $error = "Database Error: " . $e->getMessage();
-        }
+$success = $_SESSION['subject_creation_success'] ?? '';
+unset($_SESSION['subject_creation_success']);
+$form = ['subject_code' => '', 'subject_name' => '', 'professor_id' => '', 'grade_level_id' => '', 'day_of_week' => 'Monday', 'start_time' => '08:00', 'end_time' => '11:00', 'late_threshold' => '15'];
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'add_subject') {
+    foreach ($form as $key => $default) {
+        if (isset($_POST[$key]) && is_string($_POST[$key])) $form[$key] = $_POST[$key];
+    }
+    try {
+        create_subject_with_schedule($pdo, (string)($_SESSION['user_role'] ?? ''), $_POST, $_SESSION['create_subject_csrf']);
+        $_SESSION['subject_creation_success'] = 'Subject and schedule created and assigned successfully.';
+        header('Location: subjects.php');
+        exit;
+    } catch (Throwable $e) {
+        $error = $e instanceof InvalidArgumentException ? $e->getMessage() : 'Unable to create the subject and schedule. Please try again.';
+        if (!($e instanceof InvalidArgumentException)) error_log('Subject creation failed: ' . $e->getMessage());
     }
 }
+$gradeLevels = $pdo->query('SELECT id, grade_name FROM grade_levels ORDER BY id')->fetchAll();
 
 // Fetch all professors for assignment dropdown
-$profsStmt = $pdo->query("SELECT id, name, identifier FROM users WHERE role = 'professor' ORDER BY name ASC");
+$profsStmt = $pdo->query("SELECT id, name, identifier FROM users WHERE role = 'professor' AND status = 'Active' ORDER BY name ASC");
 $professors = $profsStmt->fetchAll();
 
 // Fetch all subjects with professor info and schedule
 $subjectsStmt = $pdo->query("
-    SELECT s.*, u.name as professor_name, u.identifier as prof_identifier,
+    SELECT s.*, u.name as professor_name, u.identifier as prof_identifier, gl.grade_name,
            sc.day_of_week, sc.start_time, sc.end_time, sc.late_threshold_mins,
            (SELECT COUNT(*) FROM student_subjects ss WHERE ss.subject_id = s.id) as enrolled_count
     FROM subjects s
     JOIN users u ON s.professor_id = u.id
+    LEFT JOIN grade_levels gl ON gl.id = s.grade_level_id
     LEFT JOIN schedules sc ON s.id = sc.subject_id
     ORDER BY s.subject_code ASC
 ");
@@ -76,6 +68,7 @@ $subjects = $subjectsStmt->fetchAll();
     <ul class="nav-links">
         <li><a href="dashboard.php"><i class="fa-solid fa-gauge"></i> Dashboard</a></li>
         <li><a href="professors.php"><i class="fa-solid fa-chalkboard-user"></i> Manage Professors</a></li>
+        <li><a href="subject_editing.php"><i class="fa-solid fa-pen-to-square"></i> Edit Subjects &amp; Sections</a></li>
         <li><a href="subjects.php" class="active"><i class="fa-solid fa-book-open"></i> All Subjects</a></li>
         <li><a href="students.php"><i class="fa-solid fa-user-graduate"></i> Students</a></li>
         <li>
@@ -99,30 +92,31 @@ $subjects = $subjectsStmt->fetchAll();
     <?php if (!empty($success)): ?>
         <div class="alert alert-success">
             <i class="fa-solid fa-circle-check"></i>
-            <span><?= $success ?></span>
+            <span><?= htmlspecialchars($success) ?></span>
         </div>
     <?php endif; ?>
 
     <div class="grid-2">
         <!-- Add Subject Card -->
-        <div class="card">
+        <div class="card" id="create-subject">
             <div class="card-header">
                 <div class="card-title">
-                    <i class="fa-solid fa-folder-plus" style="color: var(--primary);"></i> Create & Assign Subject
+                    <i class="fa-solid fa-folder-plus" style="color: var(--primary);"></i> Add New Subject &amp; Schedule
                 </div>
             </div>
 
             <form action="subjects.php" method="POST">
                 <input type="hidden" name="action" value="add_subject">
+                <input type="hidden" name="csrf" value="<?= htmlspecialchars($_SESSION['create_subject_csrf'], ENT_QUOTES) ?>">
 
                 <div class="form-group">
                     <label class="form-label" for="subject_code">Subject Code *</label>
-                    <input type="text" id="subject_code" name="subject_code" class="form-control" placeholder="e.g. IT301, CS204" required>
+                    <input type="text" id="subject_code" name="subject_code" class="form-control" placeholder="e.g. G7-ENG1" maxlength="20" value="<?= htmlspecialchars($form['subject_code'], ENT_QUOTES) ?>" required>
                 </div>
 
                 <div class="form-group">
                     <label class="form-label" for="subject_name">Subject Name *</label>
-                    <input type="text" id="subject_name" name="subject_name" class="form-control" placeholder="e.g. Mobile Application Development" required>
+                    <input type="text" id="subject_name" name="subject_name" class="form-control" placeholder="e.g. English, Mathematics" maxlength="100" value="<?= htmlspecialchars($form['subject_name'], ENT_QUOTES) ?>" required>
                 </div>
 
                 <div class="form-group">
@@ -130,9 +124,19 @@ $subjects = $subjectsStmt->fetchAll();
                     <select id="professor_id" name="professor_id" class="form-control" required>
                         <option value="">-- Choose Assigned Professor --</option>
                         <?php foreach ($professors as $p): ?>
-                            <option value="<?= $p['id'] ?>">
-                                <?= htmlspecialchars($p['name']) ?> (<?= htmlspecialchars($p['identifier']) ?>)
+                            <option value="<?= $p['id'] ?>" <?= (string)$form['professor_id'] === (string)$p['id'] ? 'selected' : '' ?>>
+                                <?= htmlspecialchars(professor_display_name($p['name'])) ?>
                             </option>
+                        <?php endforeach; ?>
+                    </select>
+                </div>
+
+                <div class="form-group">
+                    <label class="form-label" for="grade_level_id">Grade Level *</label>
+                    <select id="grade_level_id" name="grade_level_id" class="form-control" required>
+                        <option value="">-- Choose Grade Level --</option>
+                        <?php foreach ($gradeLevels as $grade): ?>
+                            <option value="<?= (int)$grade['id'] ?>" <?= (string)$form['grade_level_id'] === (string)$grade['id'] ? 'selected' : '' ?>><?= htmlspecialchars($grade['grade_name']) ?></option>
                         <?php endforeach; ?>
                     </select>
                 </div>
@@ -141,39 +145,35 @@ $subjects = $subjectsStmt->fetchAll();
                     <div class="form-group">
                         <label class="form-label" for="day_of_week">Class Day</label>
                         <select id="day_of_week" name="day_of_week" class="form-control">
-                            <option value="Monday">Monday</option>
-                            <option value="Tuesday">Tuesday</option>
-                            <option value="Wednesday">Wednesday</option>
-                            <option value="Thursday">Thursday</option>
-                            <option value="Friday">Friday</option>
-                            <option value="Saturday">Saturday</option>
+                            <option value="Monday" <?= $form['day_of_week'] === 'Monday' ? 'selected' : '' ?>>Monday</option>
+                            <option value="Tuesday" <?= $form['day_of_week'] === 'Tuesday' ? 'selected' : '' ?>>Tuesday</option>
+                            <option value="Wednesday" <?= $form['day_of_week'] === 'Wednesday' ? 'selected' : '' ?>>Wednesday</option>
+                            <option value="Thursday" <?= $form['day_of_week'] === 'Thursday' ? 'selected' : '' ?>>Thursday</option>
+                            <option value="Friday" <?= $form['day_of_week'] === 'Friday' ? 'selected' : '' ?>>Friday</option>
+                            <option value="Saturday" <?= $form['day_of_week'] === 'Saturday' ? 'selected' : '' ?>>Saturday</option>
+                            <option value="Sunday" <?= $form['day_of_week'] === 'Sunday' ? 'selected' : '' ?>>Sunday</option>
                         </select>
                     </div>
 
                     <div class="form-group">
                         <label class="form-label" for="late_threshold">Late Grace Period</label>
-                        <select id="late_threshold" name="late_threshold" class="form-control">
-                            <option value="10">10 Mins</option>
-                            <option value="15" selected>15 Mins</option>
-                            <option value="20">20 Mins</option>
-                            <option value="30">30 Mins</option>
-                        </select>
+                        <input type="number" id="late_threshold" name="late_threshold" class="form-control" min="0" max="60" required value="<?= htmlspecialchars($form['late_threshold'], ENT_QUOTES) ?>">
                     </div>
                 </div>
 
                 <div class="grid-2" style="gap: 0.75rem;">
                     <div class="form-group">
                         <label class="form-label" for="start_time">Start Time</label>
-                        <input type="time" id="start_time" name="start_time" class="form-control" value="08:00" required>
+                        <input type="time" id="start_time" name="start_time" class="form-control" value="<?= htmlspecialchars($form['start_time'], ENT_QUOTES) ?>" required>
                     </div>
                     <div class="form-group">
                         <label class="form-label" for="end_time">End Time</label>
-                        <input type="time" id="end_time" name="end_time" class="form-control" value="11:00" required>
+                        <input type="time" id="end_time" name="end_time" class="form-control" value="<?= htmlspecialchars($form['end_time'], ENT_QUOTES) ?>" required>
                     </div>
                 </div>
 
                 <button type="submit" class="btn btn-primary btn-block">
-                    <i class="fa-solid fa-plus"></i> Save Subject
+                    <i class="fa-solid fa-plus"></i> Save Subject &amp; Schedule
                 </button>
             </form>
         </div>
@@ -207,11 +207,11 @@ $subjects = $subjectsStmt->fetchAll();
                                     <td>
                                         <strong><?= htmlspecialchars($s['subject_code']) ?></strong><br>
                                         <small style="color: var(--gray-500);"><?= htmlspecialchars($s['subject_name']) ?></small><br>
+                                        <small><?= htmlspecialchars($s['grade_name'] ?: 'No grade assigned') ?></small><br>
                                         <small class="badge badge-info"><?= (int)$s['enrolled_count'] ?> Students</small>
                                     </td>
                                     <td>
-                                        <strong><?= htmlspecialchars($s['professor_name']) ?></strong><br>
-                                        <small style="color: var(--gray-500); font-family: monospace;"><?= htmlspecialchars($s['prof_identifier']) ?></small>
+                                        <strong><?= htmlspecialchars(professor_display_name($s['professor_name'])) ?></strong>
                                     </td>
                                     <td>
                                         <?php if ($s['day_of_week']): ?>

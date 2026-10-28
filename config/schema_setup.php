@@ -1,5 +1,6 @@
 <?php
 // config/schema_setup.php
+require_once __DIR__ . '/student_sections.php';
 
 function ensure_system_schema(PDO $pdo) {
     static $checked = false;
@@ -17,6 +18,33 @@ function ensure_system_schema(PDO $pdo) {
                 `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
         ");
+
+        // 1A. password_resets table for Forgot Password functionality
+        $pdo->exec("
+            CREATE TABLE IF NOT EXISTS `password_resets` (
+                `id` INT AUTO_INCREMENT PRIMARY KEY,
+                `email` VARCHAR(100) NOT NULL,
+                `token_hash` VARCHAR(64) NOT NULL,
+                `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                `expires_at` DATETIME NOT NULL,
+                `used_at` DATETIME NULL,
+                INDEX `idx_email` (`email`),
+                INDEX `idx_token_hash` (`token_hash`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+        ");
+
+        // OTP recovery records use Unix timestamps to avoid timezone differences.
+        $pdo->exec("CREATE TABLE IF NOT EXISTS `password_reset_otps` (
+    `request_id` CHAR(64) PRIMARY KEY,
+    `user_id` INT NOT NULL,
+    `otp_hash` VARCHAR(255) NOT NULL,
+    `created_at` BIGINT NOT NULL,
+    `expires_at` BIGINT NOT NULL,
+    `attempts` INT NOT NULL DEFAULT 0,
+    `verified_at` BIGINT NULL,
+    `used_at` BIGINT NULL,
+    INDEX `idx_otp_user_created` (`user_id`, `created_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;");
 
         // 1B. Ensure users table has status, grade_level, guardian_contact, student_subtitle columns for Student Records
         $statusCol = $pdo->query("SHOW COLUMNS FROM `users` LIKE 'status'")->fetch();
@@ -134,6 +162,21 @@ function ensure_system_schema(PDO $pdo) {
             ");
         }
 
+        // Keep available sections even when no students are assigned yet.
+        $pdo->exec("CREATE TABLE IF NOT EXISTS school_sections (
+            id INT AUTO_INCREMENT PRIMARY KEY, grade_level_id INT NOT NULL, section_name VARCHAR(50) NOT NULL,
+            UNIQUE KEY unique_grade_section (grade_level_id, section_name),
+            FOREIGN KEY (grade_level_id) REFERENCES grade_levels(id) ON DELETE CASCADE
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+        $sectionCount = $pdo->prepare('SELECT COUNT(*) FROM school_sections WHERE grade_level_id = ?');
+        $sectionInsert = $pdo->prepare('INSERT INTO school_sections (grade_level_id, section_name) VALUES (?, ?)');
+        foreach ($pdo->query('SELECT id, grade_name FROM grade_levels')->fetchAll(PDO::FETCH_ASSOC) as $grade) {
+            $sectionCount->execute([$grade['id']]);
+            if ((int)$sectionCount->fetchColumn() === 0) {
+                foreach (default_grade_section_names($grade['grade_name']) as $sectionName) $sectionInsert->execute([$grade['id'], $sectionName]);
+            }
+        }
+
         // Seed Grade Level Curriculum Subjects if not yet linked
         $coreSubjects = [
             'English',
@@ -168,7 +211,7 @@ function ensure_system_schema(PDO $pdo) {
 
         // Seed 12 Sample Teachers (10 Present, 1 Absent, 1 Late)
         $teacherCount = (int)$pdo->query("SELECT COUNT(*) FROM `teachers`")->fetchColumn();
-        if ($teacherCount < 12) {
+        if ($teacherCount === 0) {
             $defaultPass = '$2y$10$hWvMSDk54XvI2SLszIYFV.L8Yr4nhlnoX8uV5XSHb7TDtjKn35PuW'; // password123
             $sampleTeachers = [
                 ['TCH-2026-001', 'Mr. John Angac',       'HCI (IT)',  2, 'Grade 8',  'Computer',           'john.angac@school.edu.ph',       '0917-234-5601', 'Active', '07:52:00', '15:45:00', 'Present'],
@@ -191,8 +234,8 @@ function ensure_system_schema(PDO $pdo) {
             ");
 
             $tchIns = $pdo->prepare("
-                INSERT IGNORE INTO `teachers` (`user_id`, `teacher_id`, `full_name`, `department_code`, `grade_level_id`, `subject_id`, `grade_level_name`, `subject_name`, `email`, `contact_number`, `status`)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT IGNORE INTO `teachers` (`user_id`, `teacher_id`, `full_name`, `department_code`, `grade_level_id`, `subject_id`, `grade_level_name`, `subject_name`, `section_name`, `email`, `contact_number`, `status`)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ");
 
             $assignIns = $pdo->prepare("
@@ -221,14 +264,15 @@ function ensure_system_schema(PDO $pdo) {
                 $sStmt->execute([$gId, $sName]);
                 $sId = $sStmt->fetchColumn() ?: null;
 
-                $tchIns->execute([$uId, $tCode, $tName, $deptCode, $gId, $sId, $gName, $sName, $tEmail, $tPhone, $tStatus]);
+                $tchIns->execute([$uId, $tCode, $tName, $deptCode, $gId, $sId, $gName, $sName, default_grade_section_names($gName)[0], $tEmail, $tPhone, $tStatus]);
 
                 $getTStmt = $pdo->prepare("SELECT id FROM `teachers` WHERE `teacher_id` = ? LIMIT 1");
                 $getTStmt->execute([$tCode]);
                 $newTeacherId = (int)$getTStmt->fetchColumn();
                 if ($newTeacherId <= 0) continue;
+                $pdo->prepare('UPDATE users SET grade_level = ?, course_section = ? WHERE id = ?')->execute([$gName, default_grade_section_names($gName)[0], $uId]);
 
-                $assignIns->execute([$newTeacherId, $gId, $sId, $sName, $gName . ' - Section A']);
+                $assignIns->execute([$newTeacherId, $gId, $sId, $sName, default_grade_section_names($gName)[0]]);
 
                 if ($uId && $sId) {
                     $pdo->prepare("UPDATE `subjects` SET `professor_id` = ? WHERE `id` = ?")->execute([$uId, $sId]);
@@ -254,40 +298,22 @@ function ensure_system_schema(PDO $pdo) {
             }
         }
 
-        // Ensure today has teacher attendance records for all active teachers so Today's monitoring is always populated
-        $today = date('Y-m-d');
-        $todayCheck = (int)$pdo->query("SELECT COUNT(*) FROM `teacher_attendance` WHERE `date` = '$today'")->fetchColumn();
-        if ($todayCheck === 0) {
-            $allT = $pdo->query("SELECT * FROM `teachers` ORDER BY id ASC")->fetchAll();
-            $attIns = $pdo->prepare("
-                INSERT IGNORE INTO `teacher_attendance` (`teacher_id`, `subject_name`, `grade_level_name`, `date`, `time_in`, `time_out`, `status`, `remarks`)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            ");
-            foreach ($allT as $idx => $tr) {
-                if ($idx === 1) {
-                    $attIns->execute([$tr['id'], $tr['subject_name'], $tr['grade_level_name'], $today, '08:10:00', '15:20:00', 'Absent', 'Recorded absent']);
-                } elseif ($idx === 3) {
-                    $attIns->execute([$tr['id'], $tr['subject_name'], $tr['grade_level_name'], $today, '08:00:00', '16:15:00', 'Late', 'Late arrival']);
-                } else {
-                    $attIns->execute([$tr['id'], $tr['subject_name'], $tr['grade_level_name'], $today, '07:52:00', '15:45:00', 'Present', 'On time']);
-                }
-            }
-        }
+        // Daily attendance is recorded only by actual scans or authorized manual entries.
 
         // 6. Seed / Sync the 7 Student Records to match High School sections (no BSIT / college codes)
         $defaultStudentPass = '$2y$10$hWvMSDk54XvI2SLszIYFV.L8Yr4nhlnoX8uV5XSHb7TDtjKn35PuW'; // password123
         $seedStudents = [
-            ['2025-07-00594', 'Edcel Ventura',      '2025-07-00594', 'Grade 7',  'Section A - Rizal',     'edcel01ventura@gmail.com',      '+63 912 345 6789', 'Active'],
-            ['2026-000-001',  'RYAN',               '2026-000-001',  'Grade 8',  'Section B - Jacinto',   'ryan@gmail.com',                '+63 917 123 4567', 'Active'],
-            ['2026-000-002',  'DEN MAR',            'admin',         'Grade 9',  'Section A - Mabini',    'denmar@gmail.com',              '+63 918 765 4321', 'Active'],
-            ['2026-005',      'luna dela cruz',     'STUD-2026-005', 'Grade 10', 'Section A - Luna',      'stud@gmail.com',                '+63 919 876 5432', 'Active'],
-            ['2026-101',      'Maria Clara Santos', 'STUD-2026-101', 'Grade 8',  'Section A - Bonifacio', 'maria.santos@student.edu.ph',   '+63 920 111 2222', 'Active'],
-            ['2026-102',      'Juan Dela Cruz',     'STUD-2026-102', 'Grade 7',  'Section B - Plaridel',  'juan.delaCruz@gmail.com',       '+63 921 333 4444', 'Active'],
-            ['2026-103',      'Ana Reyes',          'STUD-2026-103', 'Grade 10', 'Section B - Del Pilar', 'ana.reyes@gmail.com',           '+63 922 555 6666', 'Active'],
+            ['2025-07-00594', 'Edcel Ventura',      '2025-07-00594', 'Grade 7',  'Grade 7 - Emerald',     'edcel01ventura@gmail.com',      '+63 912 345 6789', 'Active'],
+            ['2026-000-001',  'RYAN',               '2026-000-001',  'Grade 8',  'Grade 8 - Topaz',   'ryan@gmail.com',                '+63 917 123 4567', 'Active'],
+            ['2026-000-002',  'DEN MAR',            'admin',         'Grade 9',  'Grade 9 - Diamond',    'denmar@gmail.com',              '+63 918 765 4321', 'Active'],
+            ['2026-005',      'luna dela cruz',     'STUD-2026-005', 'Grade 10', 'Grade 10 - Onyx',      'stud@gmail.com',                '+63 919 876 5432', 'Active'],
+            ['2026-101',      'Maria Clara Santos', 'STUD-2026-101', 'Grade 8',  'Grade 8 - Sapphire', 'maria.santos@student.edu.ph',   '+63 920 111 2222', 'Active'],
+            ['2026-102',      'Juan Dela Cruz',     'STUD-2026-102', 'Grade 7',  'Grade 7 - Jade',  'juan.delaCruz@gmail.com',       '+63 921 333 4444', 'Active'],
+            ['2026-103',      'Ana Reyes',          'STUD-2026-103', 'Grade 10', 'Grade 10 - Quartz', 'ana.reyes@gmail.com',           '+63 922 555 6666', 'Active'],
         ];
 
         $stuCount = (int)$pdo->query("SELECT COUNT(*) FROM `users` WHERE `role` = 'student'")->fetchColumn();
-        if ($stuCount < 7) {
+        if ($stuCount === 0) {
             $stuUpsert = $pdo->prepare("
                 INSERT INTO `users` (`identifier`, `name`, `email`, `password`, `role`, `course_section`, `grade_level`, `guardian_contact`, `student_subtitle`, `status`, `qr_token`)
                 VALUES (?, ?, ?, ?, 'student', ?, ?, ?, ?, ?, ?)
@@ -310,26 +336,14 @@ function ensure_system_schema(PDO $pdo) {
         $pdo->exec("
             UPDATE `users`
             SET `course_section` = CASE
-                WHEN `grade_level` = 'Grade 7'  THEN 'Section A - Rizal'
-                WHEN `grade_level` = 'Grade 8'  THEN 'Section A - Bonifacio'
-                WHEN `grade_level` = 'Grade 9'  THEN 'Section A - Mabini'
-                WHEN `grade_level` = 'Grade 10' THEN 'Section A - Luna'
-                ELSE 'Section A - Bonifacio'
+                WHEN `grade_level` = 'Grade 7'  THEN 'Grade 7 - Emerald'
+                WHEN `grade_level` = 'Grade 8'  THEN 'Grade 8 - Sapphire'
+                WHEN `grade_level` = 'Grade 9'  THEN 'Grade 9 - Diamond'
+                WHEN `grade_level` = 'Grade 10' THEN 'Grade 10 - Onyx'
+                ELSE 'Grade 8 - Sapphire'
             END
             WHERE `role` = 'student'
               AND (`course_section` IS NULL OR `course_section` = '' OR `course_section` LIKE '%BSIT%' OR `course_section` LIKE '%bsit%' OR `course_section` LIKE 'IT-%')
-        ");
-
-        // Replace 'Prof.' prefix with 'Teacher' in users and teachers tables
-        $pdo->exec("
-            UPDATE `users`
-            SET `name` = REPLACE(`name`, 'Prof. ', 'Teacher ')
-            WHERE `name` LIKE 'Prof.%'
-        ");
-        $pdo->exec("
-            UPDATE `teachers`
-            SET `full_name` = REPLACE(`full_name`, 'Prof. ', 'Teacher ')
-            WHERE `full_name` LIKE 'Prof.%'
         ");
 
         // Remove legacy college subjects (where grade_level_id IS NULL, e.g. IT301, IT302) from student enrollments
@@ -344,6 +358,7 @@ function ensure_system_schema(PDO $pdo) {
             UPDATE `subjects` s
             JOIN `teachers` t ON t.subject_id = s.id AND t.user_id IS NOT NULL
             SET s.professor_id = t.user_id
+            WHERE s.professor_id IS NULL
         ");
 
         // Ensure every subject has a class schedule with start_time and end_time

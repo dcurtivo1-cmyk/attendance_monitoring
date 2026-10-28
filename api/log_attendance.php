@@ -31,6 +31,9 @@ if ($qr_token === '') {
 
 try {
     $pdo = get_db_connection();
+    $attendanceNow = school_now();
+    $todayDate = $attendanceNow->format('Y-m-d');
+    $currentTime = $attendanceNow->format('H:i:s');
 
     // =========================================================================
     // FLOW 1: STUDENT SCANS PROFESSOR'S QR CODE (Primary Student Scanner Flow)
@@ -148,14 +151,13 @@ try {
         }
 
         $prof_id = $prof_user ? intval($prof_user['id']) : intval($subject['professor_id']);
-        $prof_name = $prof_user ? preg_replace('/^Prof\.?\s+/i', 'Teacher ', trim($prof_user['name'])) : 'Assigned Teacher';
+        $prof_name = professor_display_name($prof_user['name'] ?? null);
 
         // Ensure student is enrolled in this subject
         $enrollStmt = $pdo->prepare("INSERT IGNORE INTO student_subjects (student_id, subject_id) VALUES (?, ?)");
         $enrollStmt->execute([$student['id'], $subject['id']]);
 
         // Check if already recorded today
-        $todayDate = date('Y-m-d');
         $checkStmt = $pdo->prepare("SELECT * FROM attendance WHERE student_id = ? AND subject_id = ? AND date = ?");
         $checkStmt->execute([$student['id'], $subject['id'], $todayDate]);
         $existing = $checkStmt->fetch();
@@ -163,7 +165,7 @@ try {
         if ($existing) {
             echo json_encode([
                 'status'  => 'already_recorded',
-                'message' => 'Naitala na ang iyong attendance para sa klase na ito ngayong araw!',
+                'message' => $existing['status'] === 'Absent' ? 'Naitala kang Absent. Makipag-ugnayan sa teacher kung may kailangang itama.' : 'Naitala na ang iyong attendance para sa klase na ito ngayong araw!',
                 'student' => [
                     'name'           => $student['name'],
                     'identifier'     => $student['identifier'],
@@ -177,31 +179,20 @@ try {
                 ],
                 'attendance' => [
                     'date'    => date('M d, Y', strtotime($existing['date'])),
-                    'time_in' => date('h:i A', strtotime($existing['time_in'])),
+                    'time_in' => school_format_time($existing['time_in']),
                     'status'  => $existing['status']
                 ]
             ]);
             exit;
         }
 
-        // Determine Present or Late based on Subject Schedule
-        $currentDay  = date('l');
-        $currentTime = date('H:i:s');
-        $status      = 'Present';
-
-        $schedStmt = $pdo->prepare("SELECT * FROM schedules WHERE subject_id = ? AND day_of_week = ? LIMIT 1");
-        $schedStmt->execute([$subject['id'], $currentDay]);
-        $sched = $schedStmt->fetch();
-
-        if ($sched) {
-            $startTime         = strtotime($sched['start_time']);
-            $lateThresholdMins = (int)($sched['late_threshold_mins'] ?? 15);
-            $lateCutoffTime    = $startTime + ($lateThresholdMins * 60);
-
-            if (time() > $lateCutoffTime) {
-                $status = 'Late';
-            }
+        if (school_class_has_ended($pdo, (int)$subject['id'], school_now())) {
+            echo json_encode(['status' => 'error', 'message' => 'Tapos na ang oras ng klase. Makipag-ugnayan sa teacher para sa attendance correction.']);
+            exit;
         }
+
+        // Use the same Philippine server timestamp for date, time and lateness.
+        $status = school_scan_status($pdo, (int)$subject['id'], $attendanceNow);
 
         // Record Attendance
         $insertStmt = $pdo->prepare("
@@ -224,7 +215,7 @@ try {
                 ? strtoupper(substr($parts[0], 0, 1) . substr($parts[1], 0, 1))
                 : strtoupper(substr($student['name'], 0, 2));
             $gradeLevel = !empty($student['grade_level']) ? $student['grade_level'] : 'Grade 8';
-            $secName    = !empty($student['course_section']) ? $student['course_section'] : 'Section A';
+            $secName    = !empty($student['course_section']) ? $student['course_section'] : 'No section assigned';
 
             $pdo->prepare("
                 INSERT INTO attendance_records (record_date, record_time, student_name, student_code, avatar_initials, grade_level, section_name, subject_name, status, remarks)
@@ -302,7 +293,6 @@ try {
     $enrollStmt = $pdo->prepare("INSERT IGNORE INTO student_subjects (student_id, subject_id) VALUES (?, ?)");
     $enrollStmt->execute([$student['id'], $subject_id]);
 
-    $todayDate = date('Y-m-d');
     $checkStmt = $pdo->prepare("SELECT * FROM attendance WHERE student_id = ? AND subject_id = ? AND date = ?");
     $checkStmt->execute([$student['id'], $subject_id, $todayDate]);
     $existing = $checkStmt->fetch();
@@ -318,15 +308,19 @@ try {
             ],
             'attendance' => [
                 'date'    => $existing['date'],
-                'time_in' => date('h:i A', strtotime($existing['time_in'])),
+                'time_in' => school_format_time($existing['time_in']),
                 'status'  => $existing['status']
             ]
         ]);
         exit;
     }
 
-    $currentTime = date('H:i:s');
-    $status = 'Present';
+    if (school_class_has_ended($pdo, (int)$subject_id, school_now())) {
+        echo json_encode(['status' => 'error', 'message' => 'Class has ended. Use manual attendance for an authorized correction.']);
+        exit;
+    }
+
+    $status = school_scan_status($pdo, (int)$subject_id, $attendanceNow);
 
     $insertStmt = $pdo->prepare("
         INSERT INTO attendance (student_id, subject_id, date, time_in, status, scanned_by) 

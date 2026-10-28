@@ -2,34 +2,13 @@
 // admin/students.php
 require_once __DIR__ . '/../config/database.php';
 require_once __DIR__ . '/../config/auth_check.php';
+require_once __DIR__ . '/../config/student_sections.php';
+require_once __DIR__ . '/../config/student_account.php';
 
 require_auth(['admin']);
 $user = current_user();
 $pdo = get_db_connection();
-
-// Ensure existing student rows have populated grade_level, course_section, guardian_contact, student_subtitle
-try {
-    $seedMap = [
-        '2025-07-00594' => ['Edcel Ventura',      '2025-07-00594', 'Grade 7',  'Section A - Rizal',     'edcel01ventura@gmail.com',    '+63 912 345 6789'],
-        '2026-000-001'  => ['RYAN',               '2026-000-001',  'Grade 8',  'Section B - Jacinto',   'ryan@gmail.com',              '+63 917 123 4567'],
-        '2026-000-002'  => ['DEN MAR',            'admin',         'Grade 9',  'Section A - Mabini',    'denmar@gmail.com',            '+63 918 765 4321'],
-        '2026-005'      => ['luna dela cruz',     'STUD-2026-005', 'Grade 10', 'Section A - Luna',      'stud@gmail.com',              '+63 919 876 5432'],
-        '2026-101'      => ['Maria Clara Santos', 'STUD-2026-101', 'Grade 8',  'Section A - Bonifacio', 'maria.santos@student.edu.ph', '+63 920 111 2222'],
-        '2026-102'      => ['Juan Dela Cruz',     'STUD-2026-102', 'Grade 7',  'Section B - Plaridel',  'juan.delaCruz@gmail.com',     '+63 921 333 4444'],
-        '2026-103'      => ['Ana Reyes',          'STUD-2026-103', 'Grade 10', 'Section B - Del Pilar', 'ana.reyes@gmail.com',         '+63 922 555 6666'],
-    ];
-
-    $syncStmt = $pdo->prepare("
-        UPDATE users
-        SET grade_level = ?, course_section = ?, guardian_contact = ?, student_subtitle = ?
-        WHERE identifier = ? AND role = 'student' AND (student_subtitle IS NULL OR student_subtitle = '')
-    ");
-    foreach ($seedMap as $ident => $meta) {
-        $syncStmt->execute([$meta[2], $meta[3], $meta[5], $meta[1], $ident]);
-    }
-} catch (PDOException $e) {
-    // Ignore if columns are being migrated
-}
+$_SESSION['create_student_csrf'] ??= bin2hex(random_bytes(32));
 
 // =========================================================================
 // AJAX / JSON API HANDLERS FOR STUDENT RECORDS CRUD & STATUS TOGGLING
@@ -42,6 +21,10 @@ if (isset($_GET['ajax_action'])) {
         // 1. Add Student via Modal AJAX
         if ($ajaxAction === 'add_student' && $_SERVER['REQUEST_METHOD'] === 'POST') {
             $input = json_decode(file_get_contents('php://input'), true) ?? $_POST;
+            if (!is_string($input['csrf'] ?? null) || !hash_equals($_SESSION['create_student_csrf'], $input['csrf'])) {
+                echo json_encode(['status' => 'error', 'message' => 'Your form expired. Refresh the page and try again.']);
+                exit;
+            }
             $identifier       = trim($input['identifier'] ?? '');
             $firstName        = trim($input['first_name'] ?? '');
             $middleInitial    = trim($input['middle_initial'] ?? '');
@@ -59,19 +42,25 @@ if (isset($_GET['ajax_action'])) {
             }
 
             $email            = trim($input['email'] ?? '');
-            $gradeLevel       = trim($input['grade_level'] ?? 'Grade 8');
-            $courseSection    = trim($input['course_section'] ?? 'Section A - Bonifacio');
+            $gradeLevel       = trim($input['grade_level'] ?? '');
+            $courseSection    = trim($input['course_section'] ?? '');
             $guardianContact  = trim($input['guardian_contact'] ?? '+63 917 123 4567');
             $studentSubtitle  = trim($input['student_subtitle'] ?? $identifier);
             $status           = trim($input['status'] ?? 'Active');
-            $password         = trim($input['password'] ?? 'password123');
+            $password = STUDENT_DEFAULT_PASSWORD;
 
             if ($identifier === '' || ($firstName === '' && $name === '') || $email === '') {
-                echo json_encode(['status' => 'error', 'message' => 'Student ID, Name, and Guardian Email are required.']);
+                echo json_encode(['status' => 'error', 'message' => 'Student ID, Name, and Student Login Email are required.']);
                 exit;
             }
-            if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
-                echo json_encode(['status' => 'error', 'message' => 'Please enter a valid email address.']);
+            $credentialError = student_account_credentials_error($email);
+            if ($credentialError !== null) {
+                echo json_encode(['status' => 'error', 'message' => $credentialError]);
+                exit;
+            }
+
+            if (!is_valid_student_section(get_student_sections_by_grade($pdo), $gradeLevel, $courseSection)) {
+                echo json_encode(['status' => 'error', 'message' => 'Choose a section that belongs to the selected grade level. Refresh the page if sections have changed.']);
                 exit;
             }
 
@@ -83,7 +72,7 @@ if (isset($_GET['ajax_action'])) {
             }
 
             $qrToken = generate_qr_token($identifier);
-            $hashedPassword = password_hash($password !== '' ? $password : 'password123', PASSWORD_BCRYPT);
+            $hashedPassword = password_hash($password, PASSWORD_BCRYPT);
 
             $ins = $pdo->prepare("
                 INSERT INTO users (identifier, name, first_name, middle_initial, last_name, email, password, role, course_section, grade_level, guardian_contact, student_subtitle, status, qr_token)
@@ -106,10 +95,14 @@ if (isset($_GET['ajax_action'])) {
             ]);
 
             $newId = (int)$pdo->lastInsertId();
+            $notification = student_account_notification($email, $name);
+            $_SESSION['student_account_notice'] = "Student record and login account created for $name ($identifier). " . $notification['message'];
+            $_SESSION['student_account_email_sent'] = $notification['success'];
 
             echo json_encode([
                 'status'  => 'success',
-                'message' => "Student '$name' ($identifier) added successfully!",
+                'message' => $_SESSION['student_account_notice'],
+                'email_sent' => $notification['success'],
                 'student' => [
                     'id'               => $newId,
                     'identifier'       => $identifier,
@@ -174,7 +167,7 @@ if (isset($_GET['ajax_action'])) {
                     'student_subtitle' => $student['student_subtitle'] ?: $student['identifier'],
                     'email'            => $student['email'],
                     'grade_level'      => $student['grade_level'] ?: 'Grade 8',
-                    'course_section'   => $student['course_section'] ?: 'Section A - Bonifacio',
+                    'course_section'   => $student['course_section'] ?: 'No section assigned',
                     'guardian_contact' => $student['guardian_contact'] ?: '+63 917 123 4567',
                     'status'           => $student['status'] ?? 'Active',
                     'qr_token'         => $student['qr_token'] ?? '',
@@ -207,7 +200,7 @@ if (isset($_GET['ajax_action'])) {
 
             $email            = trim($input['email'] ?? '');
             $gradeLevel       = trim($input['grade_level'] ?? 'Grade 8');
-            $courseSection    = trim($input['course_section'] ?? 'Section A - Bonifacio');
+            $courseSection    = trim($input['course_section'] ?? '');
             $guardianContact  = trim($input['guardian_contact'] ?? '+63 917 123 4567');
             $status           = trim($input['status'] ?? 'Active');
             if (!in_array($status, ['Active', 'Inactive'], true)) {
@@ -219,6 +212,10 @@ if (isset($_GET['ajax_action'])) {
                 exit;
             }
 
+            if (!is_valid_student_section(get_student_sections_by_grade($pdo), $gradeLevel, $courseSection)) {
+                echo json_encode(['status' => 'error', 'message' => 'Choose a section that belongs to the selected grade level.']);
+                exit;
+            }
             $dupStmt = $pdo->prepare("SELECT id FROM users WHERE (identifier = ? OR email = ?) AND id != ? LIMIT 1");
             $dupStmt->execute([$identifier, $email, $id]);
             if ($dupStmt->fetch()) {
@@ -347,6 +344,8 @@ if (isset($_GET['ajax_action'])) {
     }
 }
 
+$studentSectionsByGrade = get_student_sections_by_grade($pdo);
+
 // Fetch all students ordered cleanly so the 7 seeded students appear in the exact order shown in the design
 $studentsStmt = $pdo->query("
     SELECT u.*,
@@ -354,7 +353,7 @@ $studentsStmt = $pdo->query("
            (SELECT COUNT(*) FROM student_subjects ss WHERE ss.student_id = u.id) AS subjects_count
     FROM users u
     WHERE u.role = 'student'
-    ORDER BY u.id ASC
+    ORDER BY u.id DESC
 ");
 $students = $studentsStmt->fetchAll();
 
@@ -368,7 +367,7 @@ $uniqueGradesList = ['Grade 7', 'Grade 8', 'Grade 9', 'Grade 10'];
 foreach ($students as &$stu) {
     $stu['status'] = !empty($stu['status']) ? $stu['status'] : 'Active';
     $stu['grade_level'] = !empty($stu['grade_level']) ? $stu['grade_level'] : 'Grade 8';
-    $stu['course_section'] = !empty($stu['course_section']) ? $stu['course_section'] : 'Section A - Bonifacio';
+    $stu['course_section'] = !empty($stu['course_section']) ? $stu['course_section'] : 'No section assigned';
     $stu['guardian_contact'] = !empty($stu['guardian_contact']) ? $stu['guardian_contact'] : '+63 917 123 4567';
     $stu['student_subtitle'] = !empty($stu['student_subtitle']) ? $stu['student_subtitle'] : $stu['identifier'];
 
@@ -1427,6 +1426,7 @@ function get_grade_badge_class(string $grade): string {
                 <i class="fa-solid fa-chalkboard-user"></i>
                 <span>Teachers</span>
             </a>
+            <a class="nav-item" href="subject_editing.php"><i class="fa-solid fa-book-open"></i><span>Subjects &amp; Sections</span></a>
             <a class="nav-item" href="attendance.php">
                 <i class="fa-solid fa-clipboard-check"></i>
                 <span>Attendance</span>
@@ -1502,6 +1502,17 @@ function get_grade_badge_class(string $grade): string {
 
         <!-- MAIN CONTENT AREA -->
         <div class="sr-content">
+            <?php $mailConfig = get_email_config(); if (empty($mailConfig['smtp_user']) || empty($mailConfig['smtp_pass'])): ?>
+                <div class="alert alert-warning" role="alert" style="margin-bottom:16px;">
+                    <strong>Student emails cannot be sent yet.</strong> Connect the sender Gmail address and Google App Password once to enable automatic emails for new accounts.
+                    <a href="email_settings.php" style="font-weight:700;text-decoration:underline;">Set up Gmail sender</a>
+                </div>
+            <?php endif; ?>
+            <p style="margin-bottom:16px;"><a href="email_settings.php">Email Settings &amp; resend student login email</a></p>
+            <?php if (!empty($_SESSION['student_account_notice'])): ?>
+                <div class="alert <?= !empty($_SESSION['student_account_email_sent']) ? 'alert-success' : 'alert-warning' ?>" role="status"><?= htmlspecialchars($_SESSION['student_account_notice'], ENT_QUOTES, 'UTF-8') ?></div>
+                <?php unset($_SESSION['student_account_notice'], $_SESSION['student_account_email_sent']); ?>
+            <?php endif; ?>
             <!-- PAGE HEADER + TOP RIGHT ACTIONS -->
             <div class="sr-header-row">
                 <div>
@@ -1632,7 +1643,7 @@ function get_grade_badge_class(string $grade): string {
                                     $initials  = get_student_initials($stu['name']);
                                     $gradeName = $stu['grade_level'] ?: 'Grade 8';
                                     $gradePill = get_grade_badge_class($gradeName);
-                                    $secName   = $stu['course_section'] ?: 'Section A - Bonifacio';
+                                    $secName   = $stu['course_section'] ?: 'No section assigned';
                                     $subText   = $stu['student_subtitle'] ?: $stu['identifier'];
                                     $phone     = $stu['guardian_contact'] ?: '+63 917 123 4567';
                                     $stStatus  = ($stu['status'] ?? 'Active') === 'Inactive' ? 'Inactive' : 'Active';
@@ -1771,6 +1782,9 @@ function get_grade_badge_class(string $grade): string {
             <button type="button" class="modal-close" onclick="closeAddStudentModal()"><i class="fa-solid fa-xmark"></i></button>
         </div>
         <form id="addStudentForm" onsubmit="submitAddStudentForm(event)">
+            <div id="addStudentAccountError" class="alert alert-danger" role="alert" style="display:none;margin-bottom:14px;"></div>
+            <input type="hidden" id="add_stu_csrf" value="<?= htmlspecialchars($_SESSION['create_student_csrf'], ENT_QUOTES, 'UTF-8') ?>">
+            <p style="margin-bottom:16px;color:var(--sr-text-muted);">Create the student record and login account. Login details will be sent to the student email below.</p>
             <div class="form-group" style="margin-bottom:0;">
                 <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
                     <label class="form-label" style="margin-bottom:0;">Student ID *</label>
@@ -1800,30 +1814,38 @@ function get_grade_badge_class(string $grade): string {
 
             <div class="grid-2" style="gap:14px;margin-top:14px;">
                 <div class="form-group" style="margin-bottom:0;">
-                    <label class="form-label">Grade Level *</label>
-                    <select id="add_stu_grade" class="form-control" required>
-                        <option value="Grade 7">Grade 7</option>
-                        <option value="Grade 8" selected>Grade 8</option>
-                        <option value="Grade 9">Grade 9</option>
-                        <option value="Grade 10">Grade 10</option>
+                    <label class="form-label" for="add_stu_grade">Grade Level *</label>
+                    <select id="add_stu_grade" class="form-control" required data-student-grade>
+                        <option value="">Choose a grade level</option>
+                        <?php foreach ($studentSectionsByGrade as $gradeName => $gradeSections): ?>
+                        <option value="<?= htmlspecialchars($gradeName, ENT_QUOTES, 'UTF-8') ?>"><?= htmlspecialchars($gradeName) ?></option>
+                        <?php endforeach; ?>
                     </select>
                 </div>
                 <div class="form-group" style="margin-bottom:0;">
-                    <label class="form-label">Section *</label>
-                    <input type="text" id="add_stu_section" class="form-control" placeholder="e.g. Section A - Bonifacio" required>
+                    <label class="form-label" for="add_stu_section">Section *</label>
+                    <select id="add_stu_section" class="form-control" required disabled data-student-section aria-describedby="add_stu_section_help"><option value="">Choose a grade level first</option></select>
+                    <small id="add_stu_section_help" data-section-help aria-live="polite" style="display:block;margin-top:6px;">Select a grade level to see its sections.</small>
                 </div>
             </div>
 
             <div class="grid-2" style="gap:14px;margin-top:14px;">
                 <div class="form-group" style="margin-bottom:0;">
-                    <label class="form-label">Guardian / Contact Email *</label>
-                    <input type="email" id="add_stu_email" class="form-control" placeholder="student@gmail.com" required>
+                    <label class="form-label" for="add_stu_email">Student Login Email *</label>
+                    <input type="email" id="add_stu_email" class="form-control" placeholder="student@gmail.com" maxlength="100" autocomplete="off" required>
+                    <small style="display:block;margin-top:6px;">Receives login details; also used for sign-in and password recovery.</small>
                 </div>
                 <div class="form-group" style="margin-bottom:0;">
                     <label class="form-label">Guardian Phone Number *</label>
                     <input type="text" id="add_stu_phone" class="form-control" value="+63 917 123 4567" required>
                 </div>
             </div>
+
+            <fieldset style="margin:18px 0 0;padding:14px;border:1px solid var(--sr-border);border-radius:12px;">
+                <legend style="padding:0 6px;font-weight:700;">Student account password</legend>
+                <p>Default password: <strong><?= htmlspecialchars(STUDENT_DEFAULT_PASSWORD) ?></strong></p>
+                <small>The website link, email, and default password will be emailed to the student. They may change their password anytime in Profile.</small>
+            </fieldset>
 
             <div class="form-group" style="margin-top:14px;margin-bottom:0;">
                 <label class="form-label">Status</label>
@@ -1836,7 +1858,7 @@ function get_grade_badge_class(string $grade): string {
             <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:22px;padding-top:14px;border-top:1px solid var(--sr-border);">
                 <button type="button" class="secondary-btn" onclick="closeAddStudentModal()">Cancel</button>
                 <button type="submit" id="addStudentSubmitBtn" class="primary-btn">
-                    <i class="fa-solid fa-plus"></i> Save Student
+                    <i class="fa-solid fa-plus"></i> Create Student &amp; Account
                 </button>
             </div>
         </form>
@@ -1878,7 +1900,7 @@ function get_grade_badge_class(string $grade): string {
             <div class="grid-2" style="gap:14px;margin-top:14px;">
                 <div class="form-group" style="margin-bottom:0;">
                     <label class="form-label">Grade Level *</label>
-                    <select id="edit_stu_grade" class="form-control" required>
+                    <select id="edit_stu_grade" class="form-control" required data-student-grade>
                         <option value="Grade 7">Grade 7</option>
                         <option value="Grade 8">Grade 8</option>
                         <option value="Grade 9">Grade 9</option>
@@ -1887,13 +1909,13 @@ function get_grade_badge_class(string $grade): string {
                 </div>
                 <div class="form-group" style="margin-bottom:0;">
                     <label class="form-label">Section *</label>
-                    <input type="text" id="edit_stu_section" class="form-control" required>
+                    <select id="edit_stu_section" class="form-control" required data-student-section></select>
                 </div>
             </div>
 
             <div class="grid-2" style="gap:14px;margin-top:14px;">
                 <div class="form-group" style="margin-bottom:0;">
-                    <label class="form-label">Guardian / Contact Email *</label>
+                    <label class="form-label">Student Login Email *</label>
                     <input type="email" id="edit_stu_email" class="form-control" required>
                 </div>
                 <div class="form-group" style="margin-bottom:0;">
@@ -1958,7 +1980,8 @@ document.addEventListener('click', function(e) {
 function showStudentAlert(message, type = 'success') {
     const alertBox = document.getElementById('studentAjaxAlert');
     alertBox.className = 'alert ' + (type === 'success' ? 'alert-success' : 'alert-danger');
-    alertBox.innerHTML = `<i class="fa-solid ${type === 'success' ? 'fa-circle-check' : 'fa-circle-exclamation'}"></i><span>${message}</span>`;
+    alertBox.innerHTML = `<i class="fa-solid ${type === 'success' ? 'fa-circle-check' : 'fa-circle-exclamation'}"></i><span></span>`;
+    alertBox.querySelector('span').textContent = message;
     alertBox.style.display = 'flex';
     setTimeout(() => { alertBox.style.display = 'none'; }, 4000);
 }
@@ -2228,6 +2251,7 @@ async function fetchNextStudentId() {
 function openAddStudentModal() {
     closeAllStudentMenus();
     document.getElementById('addStudentForm').reset();
+    document.getElementById('addStudentAccountError').style.display = 'none';
     fetchNextStudentId();
     document.getElementById('addStudentModal').classList.add('open');
 }
@@ -2238,6 +2262,8 @@ function closeAddStudentModal() {
 
 async function submitAddStudentForm(e) {
     e.preventDefault();
+    const accountError = document.getElementById('addStudentAccountError');
+    accountError.style.display = 'none';
     const btn = document.getElementById('addStudentSubmitBtn');
     const orig = btn.innerHTML;
     btn.disabled = true;
@@ -2257,6 +2283,7 @@ async function submitAddStudentForm(e) {
         grade_level: document.getElementById('add_stu_grade').value,
         course_section: document.getElementById('add_stu_section').value.trim(),
         email: document.getElementById('add_stu_email').value.trim(),
+        csrf: document.getElementById('add_stu_csrf').value,
         guardian_contact: document.getElementById('add_stu_phone').value.trim(),
         status: document.getElementById('add_stu_status').value
     };
@@ -2270,13 +2297,16 @@ async function submitAddStudentForm(e) {
         const data = await res.json();
         if (data.status === 'success') {
             closeAddStudentModal();
-            showStudentAlert(data.message, 'success');
+            showStudentAlert(data.message, data.email_sent ? 'success' : 'error');
             setTimeout(() => window.location.reload(), 600);
         } else {
-            showStudentAlert(data.message || 'Unable to add student.', 'error');
+            accountError.textContent = data.message || 'Unable to create the student account.';
+            accountError.style.display = 'block';
+            accountError.scrollIntoView({ block: 'nearest' });
         }
     } catch (err) {
-        showStudentAlert('Network error while adding student.', 'error');
+        accountError.textContent = 'Network error while creating the student account. Please try again.';
+        accountError.style.display = 'block';
     } finally {
         btn.disabled = false;
         btn.innerHTML = orig;
@@ -2309,7 +2339,8 @@ function openEditStudentModal(id) {
     document.getElementById('edit_stu_middle_initial').value = mi;
     document.getElementById('edit_stu_last_name').value = ln;
 
-    document.getElementById('edit_stu_grade').value = row.dataset.grade || 'Grade 8';
+    document.getElementById('edit_stu_grade').value = row.dataset.grade || '';
+    document.getElementById('edit_stu_grade').dispatchEvent(new Event('change'));
     document.getElementById('edit_stu_section').value = row.dataset.section || '';
     document.getElementById('edit_stu_email').value = row.dataset.email || '';
     document.getElementById('edit_stu_phone').value = row.dataset.phone || '';
@@ -2447,7 +2478,7 @@ async function openViewStudentModal(id) {
                             <strong>Section:</strong> ${s.course_section}
                         </div>
                         <div style="font-size:0.84rem;color:#58746c;margin-top:2px;">
-                            <strong>Guardian Email:</strong> ${s.email} &nbsp;|&nbsp;
+                            <strong>Student Email:</strong> ${s.email} &nbsp;|&nbsp;
                             <strong>Contact:</strong> ${s.guardian_contact}
                         </div>
                     </div>
@@ -2509,7 +2540,7 @@ function exportFilteredStudentsCSV() {
         .filter(r => r.style.display !== 'none');
 
     const csvData = [
-        ['Student Name', 'Subtitle / Tag', 'Student ID', 'Grade Level', 'Section', 'Guardian Email', 'Guardian Phone', 'Status']
+        ['Student Name', 'Subtitle / Tag', 'Student ID', 'Grade Level', 'Section', 'Student Email', 'Guardian Phone', 'Status']
     ];
 
     rows.forEach(r => {
@@ -2543,7 +2574,7 @@ function exportSingleStudentCSV(id) {
     if (!r) return;
 
     const csvData = [
-        ['Student Name', 'Subtitle / Tag', 'Student ID', 'Grade Level', 'Section', 'Guardian Email', 'Guardian Phone', 'Status'],
+        ['Student Name', 'Subtitle / Tag', 'Student ID', 'Grade Level', 'Section', 'Student Email', 'Guardian Phone', 'Status'],
         [r.dataset.name, r.dataset.subtitle, r.dataset.identifier, r.dataset.grade, r.dataset.section, r.dataset.email, r.dataset.phone, r.dataset.status]
     ];
     const csvString = csvData.map(e => e.map(v => `"${String(v).replace(/"/g, '""')}"`).join(',')).join('\n');
@@ -2581,7 +2612,7 @@ function printSingleStudent(id) {
             <div class="item"><span class="lbl">Student ID:</span> ${r.dataset.identifier}</div>
             <div class="item"><span class="lbl">Grade Level:</span> ${r.dataset.grade}</div>
             <div class="item"><span class="lbl">Section:</span> ${r.dataset.section}</div>
-            <div class="item"><span class="lbl">Guardian Email:</span> ${r.dataset.email}</div>
+            <div class="item"><span class="lbl">Student Email:</span> ${r.dataset.email}</div>
             <div class="item"><span class="lbl">Guardian Phone:</span> ${r.dataset.phone}</div>
             <div class="item"><span class="lbl">Status:</span> ${r.dataset.status}</div>
             <script>window.onload = function(){ window.print(); window.close(); };<\/script>
@@ -2645,5 +2676,7 @@ window.addEventListener('DOMContentLoaded', () => {
 });
 </script>
 
+<script type="application/json" id="student-sections-data"><?= json_encode((object)$studentSectionsByGrade, JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) ?></script>
+<script src="../assets/js/student-sections.js"></script>
 </body>
 </html>

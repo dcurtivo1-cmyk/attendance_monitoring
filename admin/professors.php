@@ -121,7 +121,7 @@ $professorsStmt = $pdo->query("
            (SELECT COUNT(DISTINCT a.student_id) FROM attendance a WHERE a.scanned_by = u.id) as total_students_scanned
     FROM users u
     WHERE u.role = 'professor'
-    ORDER BY u.created_at DESC
+    ORDER BY u.created_at DESC, u.id DESC
 ");
 $professors = $professorsStmt->fetchAll();
 
@@ -151,6 +151,7 @@ $nextEmpId = 'PROF-' . date('Y') . '-' . str_pad((count($professors) + 1), 3, '0
         <li><a href="dashboard.php"><i class="fa-solid fa-gauge"></i> Dashboard</a></li>
         <li><a href="professors.php" class="active"><i class="fa-solid fa-chalkboard-user"></i> Manage Professors</a></li>
         <li><a href="subjects.php"><i class="fa-solid fa-book-open"></i> All Subjects</a></li>
+        <li><a href="subject_editing.php"><i class="fa-solid fa-pen-to-square"></i> Subjects &amp; Sections</a></li>
         <li><a href="students.php"><i class="fa-solid fa-user-graduate"></i> Students</a></li>
         <li>
             <div class="user-badge">
@@ -215,7 +216,7 @@ $nextEmpId = 'PROF-' . date('Y') . '-' . str_pad((count($professors) + 1), 3, '0
                         <i class="fa-solid fa-user"></i> Full Name (with Title) *
                     </label>
                     <input type="text" id="name" name="name" class="form-control"
-                           placeholder="e.g. Prof. Maria Santos" required
+                           placeholder="e.g. Maria Santos" required
                            value="<?= htmlspecialchars($editingProf['name'] ?? '') ?>">
                 </div>
 
@@ -279,11 +280,7 @@ $nextEmpId = 'PROF-' . date('Y') . '-' . str_pad((count($professors) + 1), 3, '0
                             <?php foreach ($professors as $p): ?>
                                 <tr>
                                     <td>
-                                        <strong><?= htmlspecialchars($p['name']) ?></strong><br>
-                                        <small style="color: var(--gray-500); font-family: monospace; font-weight: 600;">
-                                            <?= htmlspecialchars($p['identifier']) ?>
-                                        </small><br>
-                                        <small style="color: var(--primary);"><?= htmlspecialchars($p['email']) ?></small>
+                                        <strong><?= htmlspecialchars(professor_display_name($p['name'])) ?></strong>
                                     </td>
                                     <td>
                                         <span class="badge badge-primary"><?= (int)$p['total_subjects'] ?> Subjects</span>

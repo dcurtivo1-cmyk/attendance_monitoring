@@ -1,0 +1,21 @@
+/* Account details shared by all teacher portal pages. */
+.sidebar { overflow-y:auto; }
+.sidebar-footer { flex-shrink:0; }
+.prof-card strong { overflow-wrap:anywhere; }
+.teacher-account-id { font-size:.76rem; color:rgba(255,255,255,.72); margin-top:4px; overflow-wrap:anywhere; }
+.teacher-account-email { font-size:.76rem; color:rgba(255,255,255,.88); margin-top:8px; line-height:1.5; overflow-wrap:anywhere; }
+.teacher-account-email i { margin-right:4px; }
+.teacher-profile-link { min-width:0; border-radius:10px; }
+.teacher-profile-link:focus-visible { outline:3px solid #8ecbb9; outline-offset:3px; }
+.teacher-profile-link .profile-meta { min-width:0; max-width:250px; }
+.teacher-profile-link .profile-meta strong { overflow-wrap:anywhere; }
+.teacher-profile-link .profile-meta small { display:block; }
+.teacher-profile-email { display:block; font-size:.7rem; line-height:1.4; color:#5c746e; overflow-wrap:anywhere; }
+.top-header { height:auto; min-height:76px; gap:14px; padding-top:8px; padding-bottom:8px; }
+.top-header-actions { min-width:0; }
+.top-header .btn-logout { flex-shrink:0; }
+@media(max-width:600px) {
+    .top-header { flex-wrap:wrap; padding:12px 16px; }
+    .top-header-actions { width:100%; justify-content:space-between; }
+    .teacher-profile-link .profile-meta { max-width:200px; }
+}

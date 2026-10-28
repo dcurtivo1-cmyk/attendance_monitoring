@@ -97,3 +97,66 @@ All sample accounts use the default password: **`password123`**
 
 3. **Live Verification**:
    - Look at the Teacher Dashboard: the **Present Today** counter increments and the student's name appears with a green **Present** badge automatically!
+
+
+## Password recovery with email OTP
+
+Configure environment variables in the PHP host and restart Apache after changing them:
+
+- `SMTP_HOST` (for Gmail: `smtp.gmail.com`), `SMTP_PORT` (587 or 465), `SMTP_SECURE` (`tls` or `ssl`).
+- `SMTP_USER`, `SMTP_PASS`: mail provider credentials; Gmail requires an app password.
+- `MAIL_FROM_EMAIL`: a sender verified by the provider; defaults to `SMTP_USER`. `MAIL_FROM_NAME` is optional.
+
+The application does not automatically load `.env` files. Configure variables in the host or Apache; never commit credentials. No `APP_URL` is needed for OTP emails. SMTP acceptance is required before a registered account advances after sending. The application never displays, logs, or archives OTPs. Inbox delivery still depends on provider settings and spam filtering.
+
+The recovery flow is **registered email -> 6-digit OTP -> new password** in the same browser. Codes expire after 10 minutes, allow 5 verification attempts, and are stored as bcrypt hashes. Resends have a 60-second cooldown and each account is limited to 5 codes per hour. A successfully sent replacement invalidates previous codes and pending resets. Password changes consume all pending codes for the account. The new `password_reset_otps` table is created by the existing schema setup; its DDL is also included in `database/schema.sql`. Old reset-link URLs redirect to the OTP flow.
+
+Verify delivery using a registered test mailbox: receive the OTP, verify it, save a new password, confirm the old password fails and the new password works. Test incorrect, expired, resent, and reused codes. Run `php tests/password_otp_test.php` for isolated recovery service checks and `php tests/password_recovery_test.php` for simulated SMTP checks. The SQLite test omits MySQL row-lock syntax; validate concurrent requests on MySQL before production deployment.
+
+
+## Grade and section catalog
+
+`school_sections` is the authoritative section list for student registration, admin student and teacher forms, attendance filters, and the Subjects & Sections editor. Each section belongs to a grade level. New installations use distinct names per grade: Grade 7 (Emerald, Jade, Ruby), Grade 8 (Sapphire, Topaz, Amethyst), Grade 9 (Diamond, Pearl), and Grade 10 (Onyx, Quartz). Renaming a section updates its catalog entry and linked records.
+
+The local database was standardized with `php scripts/standardize_sections.php`. This CLI-only migration saves the affected columns to a private `storage/section-backup-*.json` file before updating users, teachers, assignments, and report snapshots in a transaction. It preserves separate student cohorts and adds Section C where needed. A migration marker prevents repeat execution from overwriting subsequent edits. Keep the backup private. Normal page loads do not rerun this data migration.
+
+
+The follow-up migration `php scripts/name_grade_sections.php --apply` renames the existing catalog and every matching user, teacher, teaching assignment, and attendance snapshot in a single transaction. Run without `--apply` to preview the mapping. It saves a private `storage/named-section-backup-*.json` backup and records a migration marker so later runs do not overwrite admin edits. Each existing section is renamed individually; students retain their current grade and classmates.
+
+
+## Teacher and student profiles
+
+Both portals have a **Profile** menu (`professor/profile.php` and `student/profile.php`). Students can edit their name parts, email, and guardian contact. Teachers can edit their name, email, and contact number when a linked teacher record exists. Teacher changes synchronize the login account and all linked teacher records. School IDs, grade levels, sections, and roles remain administrator-managed.
+
+Email changes and password changes require the current password. Password changes also require matching confirmation and use bcrypt. Both forms validate a session CSRF token and only update the authenticated account. Changing email or password invalidates pending recovery codes and legacy reset links. Successful updates refresh the current session and use a redirect to prevent duplicate form submission.
+
+Run `php tests/account_profile_test.php` for isolated profile/security checks, including account isolation, protected school fields, duplicate email, invalid passwords, recovery invalidation, and rollback if teacher synchronization fails. These fixtures do not alter actual accounts.
+
+
+## School time and attendance timestamps
+
+The application sets PHP to `Asia/Manila` in `config/school_time.php`, loaded by the shared database bootstrap. Each MySQL connection uses `+08:00`, including SQL timestamps. QR attendance takes one server timestamp for its local date, time, weekday, and Present/Late calculation. With one attendance record per subject per day, the first scheduled class that day defines the lateness cutoff; the exact grace-period second is still Present.
+
+Manual attendance ignores browser-supplied arrival times. Correcting a status or marking a section preserves an existing arrival time. Page initialization no longer creates sample teacher attendance for each new day. Existing historical DATE/TIME values have not been shifted because they may include manual entries or imported records.
+
+Run `php tests/school_time_test.php` for timezone and grace-period boundary checks. The attendance section fixtures also cover `set_existing`, `bulk_existing`, and `set_spoof` to verify preserved times and server-authoritative arrival timestamps.
+
+
+## Student account creation emails
+
+Creating a student through Students, Dashboard Quick Add, or registration sets the initial password to `password123` (stored as a bcrypt hash). After account creation, the system emails the student's login address with the website link, email, and default password. Students can optionally change it in **Profile > Change Password**. Existing passwords remain unchanged.
+
+Configure `SMTP_USER` and `SMTP_PASS` in the PHP/Apache environment using the same SMTP settings as password recovery above. Account creation remains successful if SMTP fails; the page explicitly reports that the email was not sent. Duplicate or rejected submissions do not send account emails. Emails are not archived or logged.
+
+The current login link is `http://localhost/Attendance_Monitoring/login.php`. Set `APP_URL` to the application root (for example, `https://school.example.com/Attendance_Monitoring`, without `/login.php`) when hosting it for students. A localhost link works only on the computer running the website.
+
+Run `php tests/student_account_email_test.php` (also `missing_smtp` and `invalid_url`) and `php tests/student_account_creation_test.php students success`. Creation tests support `students`, `dashboard`, and `register`, with scenarios `success`, `missing`, `mismatch`, `short`, `long`, `email`, `section`, `duplicate`, and `smtp_failed`; the two admin handlers also support `csrf`. These tests use isolated SQLite accounts and simulated SMTP without contacting real mailboxes.
+
+
+### Connect Gmail from the administrator portal
+
+Open **Email Settings** from Dashboard or Student Records (`admin/email_settings.php`). Enter the sender Gmail/Google Workspace address and its 16-letter Google App Password, then choose **Save and send test email**. Enable Google 2-Step Verification first; see [Google's App Password guide](https://support.google.com/mail/answer/185833?hl=en). The test goes only to the sender address. Settings are saved after SMTP acceptance, without restarting Apache.
+
+Saved sender settings take precedence over environment settings and are stored in `storage/mail-settings.php`, which must not be shared or committed. The storage directory denies HTTP access, and the PHP settings file emits no contents. The admin form never displays the saved password and requires authentication and CSRF validation. Sending has a 30-second per-session cooldown and uses a POST/redirect flow to prevent refresh resends.
+
+Use **Resend student login email** on the same page for accounts whose first notification failed. It looks up the registered student email and only sends credentials if the current password still matches `password123`; it never resets passwords. Students with changed passwords should use the normal password recovery flow. Run `php tests/mail_settings_test.php` for isolated setup and retry checks.

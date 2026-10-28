@@ -2,10 +2,12 @@
 // admin/teachers.php
 require_once __DIR__ . '/../config/database.php';
 require_once __DIR__ . '/../config/auth_check.php';
+require_once __DIR__ . '/../config/student_sections.php';
 
 require_auth(['admin']);
 $user = current_user();
 $pdo = get_db_connection();
+$studentSectionsByGrade = get_student_sections_by_grade($pdo);
 
 $today = date('Y-m-d');
 $error = '';
@@ -46,10 +48,10 @@ if (isset($_GET['ajax_action'])) {
                 'teacher' => [
                     'id'               => (int)$teacher['id'],
                     'teacher_id'       => $teacher['teacher_id'],
-                    'full_name'        => $teacher['full_name'],
+                    'full_name'        => professor_display_name($teacher['full_name']),
                     'grade_level_name' => $teacher['grade_level_name'],
                     'subject_name'     => $teacher['subject_name'],
-                    'section_name'     => $teacher['section_name'] ?: 'Section A - Rizal',
+                    'section_name'     => $teacher['section_name'] ?: 'No section assigned',
                     'email'            => $teacher['email'],
                     'contact_number'   => $teacher['contact_number'],
                     'status'           => $teacher['status']
@@ -67,7 +69,11 @@ if (isset($_GET['ajax_action'])) {
             $full_name        = trim($input['full_name'] ?? '');
             $grade_level_name = trim($input['grade_level_name'] ?? 'Grade 7');
             $subject_name     = trim($input['subject_name'] ?? 'English');
-            $section_name     = trim($input['section_name'] ?? 'Section A - Rizal');
+            $section_name     = trim($input['section_name'] ?? '');
+            if (!is_valid_student_section($studentSectionsByGrade, $grade_level_name, $section_name)) {
+                echo json_encode(['status' => 'error', 'message' => 'Choose a section that belongs to the selected grade level.']);
+                exit;
+            }
             $email            = trim($input['email'] ?? '');
             $contact_number   = trim($input['contact_number'] ?? '');
 
@@ -99,6 +105,7 @@ if (isset($_GET['ajax_action'])) {
 
             $pdo->prepare("UPDATE teacher_assignments SET section_name = ?, grade_level_id = ?, subject_id = ?, subject_name = ? WHERE teacher_id = ?")
                 ->execute([$section_name, $gId, $sId, $subject_name, $id]);
+            sync_teacher_user_section($pdo, $id);
 
             $pdo->prepare("UPDATE teacher_attendance SET subject_name = ?, grade_level_name = ? WHERE teacher_id = ? AND date = ?")
                 ->execute([$subject_name, $grade_level_name, $id, $today]);
@@ -109,7 +116,7 @@ if (isset($_GET['ajax_action'])) {
                 'teacher' => [
                     'id'               => $id,
                     'teacher_id'       => $teacher_id,
-                    'full_name'        => $full_name,
+                    'full_name'        => professor_display_name($full_name),
                     'grade_level_name' => $grade_level_name,
                     'subject_name'     => $subject_name,
                     'section_name'     => $section_name,
@@ -128,7 +135,11 @@ if (isset($_GET['ajax_action'])) {
             $full_name        = trim($input['full_name'] ?? '');
             $grade_level_name = trim($input['grade_level_name'] ?? 'Grade 7');
             $subject_name     = trim($input['subject_name'] ?? 'English');
-            $section_name     = trim($input['section_name'] ?? 'Section A - Rizal');
+            $section_name     = trim($input['section_name'] ?? '');
+            if (!is_valid_student_section($studentSectionsByGrade, $grade_level_name, $section_name)) {
+                echo json_encode(['status' => 'error', 'message' => 'Choose a section that belongs to the selected grade level.']);
+                exit;
+            }
             $email            = trim($input['email'] ?? '');
             $contact_number   = trim($input['contact_number'] ?? '');
             $status           = trim($input['status'] ?? 'Active');
@@ -169,6 +180,7 @@ if (isset($_GET['ajax_action'])) {
             ");
             $ins->execute([$uId, $teacher_id, $full_name, $gId, $sId, $grade_level_name, $subject_name, $section_name, $email, $contact_number, $status]);
             $newTId = (int)$pdo->lastInsertId();
+                sync_teacher_user_section($pdo, $newTId);
 
             $pdo->prepare("INSERT INTO teacher_assignments (teacher_id, grade_level_id, subject_id, subject_name, section_name) VALUES (?, ?, ?, ?, ?)")
                 ->execute([$newTId, $gId, $sId, $subject_name, $section_name]);
@@ -182,7 +194,7 @@ if (isset($_GET['ajax_action'])) {
                 'teacher' => [
                     'id'               => $newTId,
                     'teacher_id'       => $teacher_id,
-                    'full_name'        => $full_name,
+                    'full_name'        => professor_display_name($full_name),
                     'grade_level_name' => $grade_level_name,
                     'subject_name'     => $subject_name,
                     'section_name'     => $section_name,
@@ -244,13 +256,19 @@ $coreSubjectsList = [
     'Computer'
 ];
 
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($_POST['action'] ?? '', ['add_teacher', 'edit_teacher'], true)
+    && !is_valid_student_section($studentSectionsByGrade, trim($_POST['grade_level_name'] ?? ''), trim($_POST['section_name'] ?? ''))) {
+    $error = 'Choose a section that belongs to the selected grade level.';
+    $_POST['action'] = '';
+}
+
 // 1. Handle Add Teacher
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'add_teacher') {
     $teacher_id       = trim($_POST['teacher_id'] ?? '');
     $full_name        = trim($_POST['full_name'] ?? '');
     $grade_level_name = trim($_POST['grade_level_name'] ?? 'Grade 7');
     $subject_name     = trim($_POST['subject_name'] ?? 'English');
-    $section_name     = trim($_POST['section_name'] ?? 'Section A - Rizal');
+    $section_name     = trim($_POST['section_name'] ?? 'No section assigned');
     $email            = trim($_POST['email'] ?? '');
     $contact_number   = trim($_POST['contact_number'] ?? '');
     $status           = trim($_POST['status'] ?? 'Active');
@@ -288,6 +306,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'add_t
                 ");
                 $ins->execute([$uId, $teacher_id, $full_name, $gId, $sId, $grade_level_name, $subject_name, $section_name, $email, $contact_number, $status]);
                 $newTId = (int)$pdo->lastInsertId();
+                sync_teacher_user_section($pdo, $newTId);
 
                 $pdo->prepare("INSERT INTO teacher_assignments (teacher_id, grade_level_id, subject_id, subject_name, section_name) VALUES (?, ?, ?, ?, ?)")
                     ->execute([$newTId, $gId, $sId, $subject_name, $section_name]);
@@ -310,7 +329,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'edit_
     $full_name        = trim($_POST['full_name'] ?? '');
     $grade_level_name = trim($_POST['grade_level_name'] ?? 'Grade 7');
     $subject_name     = trim($_POST['subject_name'] ?? 'English');
-    $section_name     = trim($_POST['section_name'] ?? 'Section A - Rizal');
+    $section_name     = trim($_POST['section_name'] ?? 'No section assigned');
     $email            = trim($_POST['email'] ?? '');
     $contact_number   = trim($_POST['contact_number'] ?? '');
     $status           = trim($_POST['status'] ?? 'Active');
@@ -336,6 +355,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'edit_
 
             $pdo->prepare("UPDATE teacher_assignments SET section_name = ?, grade_level_id = ?, subject_id = ?, subject_name = ? WHERE teacher_id = ?")
                 ->execute([$section_name, $gId, $sId, $subject_name, $id]);
+            sync_teacher_user_section($pdo, $id);
 
             $pdo->prepare("UPDATE teacher_attendance SET subject_name = ?, grade_level_name = ? WHERE teacher_id = ? AND date = ?")
                 ->execute([$subject_name, $grade_level_name, $id, $today]);
@@ -426,7 +446,7 @@ if ($subjectFilter !== '') {
     $params[':subject'] = $subjectFilter;
 }
 
-$sql .= " ORDER BY t.teacher_id ASC";
+$sql .= " ORDER BY t.id DESC";
 $stmt = $pdo->prepare($sql);
 $stmt->execute($params);
 $teachers = $stmt->fetchAll();
@@ -882,6 +902,7 @@ $showAddForm = isset($_GET['action']) && $_GET['action'] === 'add';
                 <i class="fa-solid fa-chalkboard-user"></i>
                 <span>Teachers</span>
             </a>
+            <a class="nav-item" href="subject_editing.php"><i class="fa-solid fa-book-open"></i><span>Subjects &amp; Sections</span></a>
             <a class="nav-item" href="attendance.php">
                 <i class="fa-solid fa-clipboard-check"></i>
                 <span>Attendance</span>
@@ -932,7 +953,7 @@ $showAddForm = isset($_GET['action']) && $_GET['action'] === 'add';
                                             <i class="fa-solid fa-chalkboard-user"></i>
                                         </div>
                                         <div class="notif-meta">
-                                            <strong><?= htmlspecialchars($nl['full_name']) ?></strong>
+                                            <strong><?= htmlspecialchars(professor_display_name($nl['full_name'])) ?></strong>
                                             <span><?= htmlspecialchars($nl['subject_name'] ?? 'Class') ?> &bull; <strong style="color:<?= $nl['status'] === 'Late' ? '#df8b16' : '#0d5b49' ?>"><?= htmlspecialchars($nl['status']) ?></strong></span>
                                             <span style="font-size:0.7rem;color:#889d97;"><?= date('M d, Y', strtotime($nl['date'])) ?> at <?= !empty($nl['time_in']) ? date('h:i A', strtotime($nl['time_in'])) : '—' ?></span>
                                         </div>
@@ -1016,7 +1037,7 @@ $showAddForm = isset($_GET['action']) && $_GET['action'] === 'add';
                         <div>
                             <div class="panel-title" style="font-size:1.25rem;">
                                 <i class="fa-solid fa-id-card-clip" style="color:var(--primary);"></i>
-                                <?= htmlspecialchars($historyTeacher['full_name']) ?> — Teacher Details &amp; Attendance History
+                                <?= htmlspecialchars(professor_display_name($historyTeacher['full_name'])) ?> — Teacher Details &amp; Attendance History
                             </div>
                             <div style="font-size:0.88rem;color:var(--ink-muted);margin-top:4px;">
                                 <strong>ID:</strong> <?= htmlspecialchars($historyTeacher['teacher_id']) ?> &nbsp;|&nbsp;
@@ -1165,22 +1186,22 @@ $showAddForm = isset($_GET['action']) && $_GET['action'] === 'add';
                                 <tr id="teacher-row-<?= $tId ?>"
                                     data-id="<?= $tId ?>"
                                     data-teacher-id="<?= htmlspecialchars($t['teacher_id'], ENT_QUOTES) ?>"
-                                    data-name="<?= htmlspecialchars($t['full_name'], ENT_QUOTES) ?>"
+                                    data-name="<?= htmlspecialchars(professor_display_name($t['full_name']), ENT_QUOTES) ?>"
                                     data-grade="<?= htmlspecialchars($t['grade_level_name'], ENT_QUOTES) ?>"
                                     data-subject="<?= htmlspecialchars($t['subject_name'], ENT_QUOTES) ?>"
-                                    data-section="<?= htmlspecialchars($t['section_name'] ?? 'Section A - Rizal', ENT_QUOTES) ?>"
+                                    data-section="<?= htmlspecialchars($t['section_name'] ?? 'No section assigned', ENT_QUOTES) ?>"
                                     data-email="<?= htmlspecialchars($t['email'], ENT_QUOTES) ?>"
                                     data-contact="<?= htmlspecialchars($t['contact_number'], ENT_QUOTES) ?>"
                                     data-status="<?= htmlspecialchars($t['status'], ENT_QUOTES) ?>">
                                     <td class="col-teacher-id"><strong style="font-family:monospace;color:var(--primary-dark);"><?= htmlspecialchars($t['teacher_id']) ?></strong></td>
                                     <td class="col-name">
                                         <a href="teachers.php?view_history=<?= $tId ?>#teacher-history-section" style="font-weight:700;color:var(--ink);">
-                                            <?= htmlspecialchars($t['full_name']) ?>
+                                            <?= htmlspecialchars(professor_display_name($t['full_name'])) ?>
                                         </a>
                                     </td>
                                     <td class="col-grade"><span class="student-pill"><?= htmlspecialchars($t['grade_level_name']) ?></span></td>
                                     <td class="col-subject"><strong><?= htmlspecialchars($t['subject_name']) ?></strong></td>
-                                    <td class="col-section"><span class="badge" style="background:#eef4f1;color:#0d5b49;font-weight:600;padding:4px 8px;border-radius:6px;"><?= htmlspecialchars($t['section_name'] ?: 'Section A - Rizal') ?></span></td>
+                                    <td class="col-section"><span class="badge" style="background:#eef4f1;color:#0d5b49;font-weight:600;padding:4px 8px;border-radius:6px;"><?= htmlspecialchars($t['section_name'] ?: 'No section assigned') ?></span></td>
                                     <td class="col-email"><?= htmlspecialchars($t['email']) ?></td>
                                     <td class="col-contact"><?= htmlspecialchars($t['contact_number']) ?></td>
                                     <td class="col-status">
@@ -1238,14 +1259,14 @@ $showAddForm = isset($_GET['action']) && $_GET['action'] === 'add';
                 </div>
                 <div class="form-group" style="margin-bottom:0;">
                     <label class="form-label">Full Name *</label>
-                    <input type="text" id="add_t_name" name="full_name" class="form-control" placeholder="e.g. Mr. John Angac" required>
+                    <input type="text" id="add_t_name" name="full_name" class="form-control" placeholder="e.g. John Angac" required>
                 </div>
             </div>
 
             <div class="grid-2" style="gap:14px;margin-top:14px;">
                 <div class="form-group" style="margin-bottom:0;">
                     <label class="form-label">Assign Grade Level *</label>
-                    <select id="add_t_grade" name="grade_level_name" class="form-control" required>
+                    <select id="add_t_grade" name="grade_level_name" class="form-control" required data-student-grade>
                         <?php foreach ($gradeLevels as $gl): ?>
                             <option value="<?= htmlspecialchars($gl['grade_name']) ?>"><?= htmlspecialchars($gl['grade_name']) ?></option>
                         <?php endforeach; ?>
@@ -1264,7 +1285,7 @@ $showAddForm = isset($_GET['action']) && $_GET['action'] === 'add';
             <div class="grid-2" style="gap:14px;margin-top:14px;">
                 <div class="form-group" style="margin-bottom:0;">
                     <label class="form-label">Section Handled *</label>
-                    <input type="text" id="add_t_section" name="section_name" class="form-control" placeholder="e.g. Section A - Rizal" value="Section A - Rizal" required>
+                    <select id="add_t_section" name="section_name" class="form-control" required data-student-section></select>
                 </div>
                 <div class="form-group" style="margin-bottom:0;">
                     <label class="form-label">Status</label>
@@ -1322,7 +1343,7 @@ $showAddForm = isset($_GET['action']) && $_GET['action'] === 'add';
             <div class="grid-2" style="gap:14px;margin-top:14px;">
                 <div class="form-group" style="margin-bottom:0;">
                     <label class="form-label">Grade Level *</label>
-                    <select id="edit_t_grade" name="grade_level_name" class="form-control" required>
+                    <select id="edit_t_grade" name="grade_level_name" class="form-control" required data-student-grade>
                         <?php foreach ($gradeLevels as $gl): ?>
                             <option value="<?= htmlspecialchars($gl['grade_name']) ?>"><?= htmlspecialchars($gl['grade_name']) ?></option>
                         <?php endforeach; ?>
@@ -1341,7 +1362,7 @@ $showAddForm = isset($_GET['action']) && $_GET['action'] === 'add';
             <div class="grid-2" style="gap:14px;margin-top:14px;">
                 <div class="form-group" style="margin-bottom:0;">
                     <label class="form-label">Section Handled *</label>
-                    <input type="text" id="edit_t_section" name="section_name" class="form-control" placeholder="e.g. Section A - Rizal" required>
+                    <select id="edit_t_section" name="section_name" class="form-control" required data-student-section></select>
                 </div>
                 <div class="form-group" style="margin-bottom:0;">
                     <label class="form-label">Status</label>
@@ -1556,9 +1577,10 @@ function openEditTeacherModal(id) {
     document.getElementById('edit_t_id').value = id;
     document.getElementById('edit_t_code').value = row.dataset.teacherId || '';
     document.getElementById('edit_t_name').value = row.dataset.name || '';
-    document.getElementById('edit_t_grade').value = row.dataset.grade || 'Grade 7';
+    document.getElementById('edit_t_grade').value = row.dataset.grade || '';
+    document.getElementById('edit_t_grade').dispatchEvent(new Event('change'));
     document.getElementById('edit_t_subject').value = row.dataset.subject || 'English';
-    document.getElementById('edit_t_section').value = row.dataset.section || 'Section A - Rizal';
+    document.getElementById('edit_t_section').value = row.dataset.section || '';
     document.getElementById('edit_t_status').value = row.dataset.status || 'Active';
     document.getElementById('edit_t_email').value = row.dataset.email || '';
     document.getElementById('edit_t_contact').value = row.dataset.contact || '';
@@ -1675,7 +1697,7 @@ async function openViewTeacherModal(id) {
                         <span><strong>ID:</strong> ${t.teacher_id}</span>
                         <span><strong>Grade Level:</strong> ${t.grade_level_name}</span>
                         <span><strong>Subject:</strong> ${t.subject_name}</span>
-                        <span><strong>Section Handled:</strong> <span class="badge" style="background:#dff4ec;color:#0d5b49;padding:2px 8px;border-radius:6px;font-weight:700;">${t.section_name || 'Section A - Rizal'}</span></span>
+                        <span><strong>Section Handled:</strong> <span class="badge" style="background:#dff4ec;color:#0d5b49;padding:2px 8px;border-radius:6px;font-weight:700;">${t.section_name || 'No section assigned'}</span></span>
                     </div>
                     <div style="font-size:0.84rem;color:var(--ink-muted);margin-top:6px;display:flex;flex-wrap:wrap;gap:12px;">
                         <span><strong>Email:</strong> ${t.email}</span>
@@ -1762,7 +1784,7 @@ function printTeacherRow(id) {
             <div class="row"><span class="label">Full Name:</span> ${row.dataset.name}</div>
             <div class="row"><span class="label">Grade Level:</span> ${row.dataset.grade}</div>
             <div class="row"><span class="label">Subject:</span> ${row.dataset.subject}</div>
-            <div class="row"><span class="label">Section Handled:</span> ${row.dataset.section || 'Section A - Rizal'}</div>
+            <div class="row"><span class="label">Section Handled:</span> ${row.dataset.section || ''}</div>
             <div class="row"><span class="label">Email:</span> ${row.dataset.email}</div>
             <div class="row"><span class="label">Contact Number:</span> ${row.dataset.contact}</div>
             <div class="row"><span class="label">Status:</span> ${row.dataset.status}</div>
@@ -1780,7 +1802,7 @@ function downloadTeacherRow(id) {
 
     const csv = [
         ['Teacher ID', 'Full Name', 'Grade Level', 'Subject', 'Section Handled', 'Email', 'Contact Number', 'Status'],
-        [row.dataset.teacherId, row.dataset.name, row.dataset.grade, row.dataset.subject, row.dataset.section || 'Section A - Rizal', row.dataset.email, row.dataset.contact, row.dataset.status]
+        [row.dataset.teacherId, row.dataset.name, row.dataset.grade, row.dataset.subject, row.dataset.section || '', row.dataset.email, row.dataset.contact, row.dataset.status]
     ].map(r => r.map(v => `"${String(v).replace(/"/g, '""')}"`).join(',')).join('\n');
 
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
@@ -1820,6 +1842,8 @@ async function deleteTeacherRow(id) {
 }
 </script>
 
+<script type="application/json" id="student-sections-data"><?= json_encode((object)$studentSectionsByGrade, JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) ?></script>
+<script src="../assets/js/student-sections.js"></script>
 </body>
 </html>
 

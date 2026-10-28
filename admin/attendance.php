@@ -2,14 +2,16 @@
 // admin/attendance.php
 require_once __DIR__ . '/../config/database.php';
 require_once __DIR__ . '/../config/auth_check.php';
+require_once __DIR__ . '/../config/student_sections.php';
 
 require_auth(['admin']);
 $user = current_user();
 $pdo = get_db_connection();
+$studentSectionsByGrade = get_student_sections_by_grade($pdo);
 
 // Helper function to extract initials from teacher name
 function get_teacher_initials(string $name): string {
-    $clean = trim(str_replace(['Teacher', 'Prof.', 'Mr.', 'Ms.', 'Mrs.', "Ma'am", 'Sir'], '', $name));
+    $clean = professor_display_name($name);
     $parts = preg_split('/\s+/', $clean);
     $parts = array_values(array_filter($parts));
     if (count($parts) >= 2) {
@@ -42,7 +44,7 @@ if (isset($_GET['ajax_action'])) {
                     t.full_name as teacher_name,
                     t.email as teacher_email,
                     t.grade_level_name as grade_level,
-                    COALESCE(t.section_name, 'Section A') as section_name,
+                    COALESCE(t.section_name, 'No section assigned') as section_name,
                     t.subject_name as subject_name
                 FROM `teacher_attendance` ta
                 JOIN `teachers` t ON t.id = ta.teacher_id
@@ -67,9 +69,9 @@ if (isset($_GET['ajax_action'])) {
                     'day_short'       => date('D', strtotime($row['record_date'])),
                     'record_time'     => substr($row['record_time'], 0, 5),
                     'formatted_time'  => date('h:i A', strtotime($row['record_time'])),
-                    'teacher_name'    => $row['teacher_name'],
+                    'teacher_name'    => professor_display_name($row['teacher_name']),
                     'teacher_code'    => $row['teacher_code'],
-                    'student_name'    => $row['teacher_name'],
+                    'student_name'    => professor_display_name($row['teacher_name']),
                     'student_code'    => $row['teacher_code'],
                     'avatar_initials' => $initials,
                     'grade_level'     => $row['grade_level'],
@@ -136,7 +138,7 @@ if (isset($_GET['ajax_action'])) {
             $stmt = $pdo->prepare("
                 SELECT 
                     ta.id, ta.date as record_date, COALESCE(ta.time_in, '07:52:00') as record_time, ta.status, COALESCE(ta.remarks, 'On time') as remarks,
-                    t.teacher_id as teacher_code, t.full_name as teacher_name, t.grade_level_name as grade_level, COALESCE(t.section_name, 'Section A') as section_name, t.subject_name
+                    t.teacher_id as teacher_code, t.full_name as teacher_name, t.grade_level_name as grade_level, COALESCE(t.section_name, 'No section assigned') as section_name, t.subject_name
                 FROM `teacher_attendance` ta
                 JOIN `teachers` t ON t.id = ta.teacher_id
                 WHERE ta.id = ? LIMIT 1
@@ -155,13 +157,13 @@ if (isset($_GET['ajax_action'])) {
                     'day_short'       => date('D', strtotime($record_date)),
                     'record_time'     => substr($record_time, 0, 5),
                     'formatted_time'  => date('h:i A', strtotime($record_time)),
-                    'teacher_name'    => $updated['teacher_name'] ?? '',
+                    'teacher_name'    => professor_display_name($updated['teacher_name'] ?? ''),
                     'teacher_code'    => $updated['teacher_code'] ?? '',
-                    'student_name'    => $updated['teacher_name'] ?? '',
+                    'student_name'    => professor_display_name($updated['teacher_name'] ?? ''),
                     'student_code'    => $updated['teacher_code'] ?? '',
                     'avatar_initials' => $initials,
                     'grade_level'     => $updated['grade_level'] ?? 'Grade 8',
-                    'section_name'    => $updated['section_name'] ?? 'Section A',
+                    'section_name'    => $updated['section_name'] ?? 'No section assigned',
                     'subject_name'    => $updated['subject_name'] ?? 'General',
                     'status'          => $status,
                     'remarks'         => $remarks !== '' ? $remarks : 'On time'
@@ -190,7 +192,7 @@ if (isset($_GET['ajax_action'])) {
             $student_name = trim($input['student_name'] ?? '');
             $student_code = trim($input['student_code'] ?? '');
             $grade_level  = trim($input['grade_level'] ?? 'Grade 7');
-            $section_name = trim($input['section_name'] ?? 'Jupiter');
+            $section_name = trim($input['section_name'] ?? '');
             $subject_name = trim($input['subject_name'] ?? 'Mathematics');
             $status       = trim($input['status'] ?? 'Present');
             $remarks      = trim($input['remarks'] ?? '-');
@@ -242,7 +244,7 @@ $recordsStmt = $pdo->query("
         t.full_name as teacher_name,
         t.email as teacher_email,
         t.grade_level_name as grade_level,
-        COALESCE(t.section_name, 'Section A') as section_name,
+        COALESCE(t.section_name, 'No section assigned') as section_name,
         t.subject_name as subject_name
     FROM `teacher_attendance` ta
     JOIN `teachers` t ON t.id = ta.teacher_id
@@ -258,7 +260,7 @@ $lateCount = 0;
 
 foreach ($records as &$rec) {
     $rec['avatar_initials'] = get_teacher_initials($rec['teacher_name']);
-    $rec['student_name'] = $rec['teacher_name'];
+    $rec['student_name'] = professor_display_name($rec['teacher_name']);
     $rec['student_code'] = $rec['teacher_code'];
 
     if ($rec['status'] === 'Present') $presentCount++;
@@ -730,6 +732,33 @@ function get_att_section_class(string $section): string {
             box-shadow: 0 2px 8px rgba(15, 45, 38, 0.025);
             overflow: visible;
         }
+        .att-search-bar {
+            padding: 16px 20px;
+            border-bottom: 1px solid var(--att-border);
+        }
+        .att-search-bar label {
+            display: block;
+            margin-bottom: 8px;
+            color: #12332b;
+            font-size: 0.85rem;
+            font-weight: 600;
+        }
+        .att-search-bar input {
+            box-sizing: border-box;
+            width: 100%;
+            min-width: 0;
+            padding: 12px 14px;
+            border: 1px solid var(--att-border);
+            border-radius: 10px;
+            background: #fff;
+            color: #12332b;
+            font: inherit;
+            font-size: 1rem;
+        }
+        .att-search-bar input:focus-visible {
+            outline: 2px solid #0e7c55;
+            outline-offset: 2px;
+        }
         .att-table-card-header {
             padding: 16px 20px;
             display: flex;
@@ -1140,6 +1169,10 @@ function get_att_section_class(string $section): string {
                 <i class="fa-solid fa-chalkboard-user"></i>
                 <span>Teachers</span>
             </a>
+            <a class="nav-item" href="subject_editing.php">
+                <i class="fa-solid fa-book-open"></i>
+                <span>Subjects &amp; Sections</span>
+            </a>
             <a class="nav-item active" href="attendance.php">
                 <i class="fa-solid fa-clipboard-check"></i>
                 <span>Attendance</span>
@@ -1294,10 +1327,9 @@ function get_att_section_class(string $section): string {
                     <div class="att-select-box">
                         <select id="filterSection">
                             <option value="">All Sections</option>
-                            <option value="Jupiter">Jupiter</option>
-                            <option value="Mercury">Mercury</option>
-                            <option value="Saturn">Saturn</option>
-                            <option value="Neptune">Neptune</option>
+                            <?php foreach ($studentSectionsByGrade as $sectionNames): foreach ($sectionNames as $sectionName): ?>
+                            <option value="<?= htmlspecialchars($sectionName, ENT_QUOTES, 'UTF-8') ?>"><?= htmlspecialchars($sectionName) ?></option>
+                            <?php endforeach; endforeach; ?>
                         </select>
                         <i class="fa-solid fa-chevron-down chev"></i>
                     </div>
@@ -1346,6 +1378,13 @@ function get_att_section_class(string $section): string {
                             <i class="fa-solid fa-chart-line"></i> View Summary
                         </button>
                     </div>
+                </div>
+
+                <div class="att-search-bar">
+                    <label for="teacherAttendanceSearch">Search teacher attendance</label>
+                    <input type="search" id="teacherAttendanceSearch"
+                           placeholder="Search teacher name, ID, subject or section..."
+                           aria-controls="attendanceTable" oninput="applyAttendanceFilters()">
                 </div>
 
                 <div style="overflow-x:auto;">
@@ -1400,7 +1439,6 @@ function get_att_section_class(string $section): string {
                                             <div class="att-avatar col-initials"><?= htmlspecialchars($rec['avatar_initials']) ?></div>
                                             <div class="att-student-meta">
                                                 <span class="att-student-name col-student"><?= htmlspecialchars($rec['student_name']) ?></span>
-                                                <span class="att-student-code col-code"><?= htmlspecialchars($rec['student_code']) ?></span>
                                             </div>
                                         </div>
                                     </td>
@@ -1453,13 +1491,16 @@ function get_att_section_class(string $section): string {
                                     </td>
                                 </tr>
                             <?php endforeach; ?>
+                            <tr id="attSearchEmpty" hidden>
+                                <td colspan="9" style="text-align:center;padding:24px;">No teacher attendance records match your search or filters.</td>
+                            </tr>
                         </tbody>
                     </table>
                 </div>
 
                 <!-- FOOTER & PAGINATION -->
                 <div class="att-table-footer">
-                    <div id="attFooterSummary">Showing 1 to <?= count($records) ?> of <?= $totalRecordsCount ?> records</div>
+                    <div id="attFooterSummary" role="status" aria-live="polite">Showing 1 to <?= count($records) ?> of <?= $totalRecordsCount ?> records</div>
                     <div class="att-pagination" id="attPaginationControls"></div>
                 </div>
             </div>
@@ -1516,7 +1557,7 @@ function get_att_section_class(string $section): string {
             <div class="grid-2" style="gap:14px;margin-top:14px;">
                 <div class="form-group" style="margin-bottom:0;">
                     <label class="form-label">Grade Level *</label>
-                    <select id="edit_att_grade" class="form-control" required>
+                    <select id="edit_att_grade" class="form-control" required data-student-grade>
                         <option value="Grade 7">Grade 7</option>
                         <option value="Grade 8">Grade 8</option>
                         <option value="Grade 9">Grade 9</option>
@@ -1525,12 +1566,7 @@ function get_att_section_class(string $section): string {
                 </div>
                 <div class="form-group" style="margin-bottom:0;">
                     <label class="form-label">Section *</label>
-                    <select id="edit_att_section" class="form-control" required>
-                        <option value="Jupiter">Jupiter</option>
-                        <option value="Mercury">Mercury</option>
-                        <option value="Saturn">Saturn</option>
-                        <option value="Neptune">Neptune</option>
-                    </select>
+                    <select id="edit_att_section" class="form-control" required data-student-section></select>
                 </div>
             </div>
 
@@ -1621,6 +1657,7 @@ function renderAttPagination() {
 
     const allRows = document.querySelectorAll('#attendanceTableBody tr.att-data-row');
     allRows.forEach(r => r.style.display = 'none');
+    document.getElementById('attSearchEmpty').hidden = totalMatching !== 0;
 
     const startIndex = (currentAttPage - 1) * attPageSize;
     const endIndex = Math.min(startIndex + attPageSize, totalMatching);
@@ -1715,11 +1752,13 @@ function renderAttPagination() {
     container.appendChild(nextBtn);
 }
 
-// Filter Attendance Table by Grade, Section, Subject, Date
+// Search all attendance records before applying pagination.
 function applyAttendanceFilters() {
     const grade = document.getElementById('filterGrade').value;
     const section = document.getElementById('filterSection').value;
     const subject = document.getElementById('filterSubject').value;
+    const searchTerms = document.getElementById('teacherAttendanceSearch').value
+        .trim().toLocaleLowerCase().split(/\s+/).filter(Boolean);
 
     const rows = Array.from(document.querySelectorAll('#attendanceTableBody tr.att-data-row'));
     matchingAttRows = [];
@@ -1728,8 +1767,11 @@ function applyAttendanceFilters() {
         const matchGrade = !grade || r.dataset.grade === grade;
         const matchSec = !section || r.dataset.section === section;
         const matchSub = !subject || r.dataset.subject === subject;
+        const searchableText = [r.dataset.student, r.dataset.code, r.dataset.subject,
+            r.dataset.grade, r.dataset.section].join(' ').toLocaleLowerCase();
+        const matchSearch = searchTerms.every(term => searchableText.includes(term));
 
-        if (matchGrade && matchSec && matchSub) {
+        if (matchGrade && matchSec && matchSub && matchSearch) {
             matchingAttRows.push(r);
         }
     });
@@ -1739,6 +1781,7 @@ function applyAttendanceFilters() {
 }
 
 function resetAttendanceFilters() {
+    document.getElementById('teacherAttendanceSearch').value = '';
     document.getElementById('filterDateRange').value = 'all';
     document.getElementById('filterGrade').value = '';
     document.getElementById('filterSection').value = '';
@@ -1857,8 +1900,9 @@ function openEditAttModal(id) {
     document.getElementById('edit_att_code').value = r.dataset.code || '';
     document.getElementById('edit_att_date').value = r.dataset.date || '2026-09-29';
     document.getElementById('edit_att_time').value = r.dataset.time || '07:15';
-    document.getElementById('edit_att_grade').value = r.dataset.grade || 'Grade 7';
-    document.getElementById('edit_att_section').value = r.dataset.section || 'Jupiter';
+    document.getElementById('edit_att_grade').value = r.dataset.grade || '';
+    document.getElementById('edit_att_grade').dispatchEvent(new Event('change'));
+    document.getElementById('edit_att_section').value = r.dataset.section || '';
     document.getElementById('edit_att_subject').value = r.dataset.subject || 'Mathematics';
     document.getElementById('edit_att_status').value = r.dataset.status || 'Present';
     document.getElementById('edit_att_remarks').value = r.dataset.remarks || '-';
@@ -1934,7 +1978,7 @@ async function submitEditAttForm(e) {
                 row.querySelector('.col-day').textContent = rec.day_short;
                 row.querySelector('.col-initials').textContent = rec.avatar_initials;
                 row.querySelector('.col-student').textContent = rec.student_name;
-                row.querySelector('.col-code').textContent = rec.student_code;
+                // Teacher ID remains available in the edit form.
 
                 const gPill = row.querySelector('.col-grade .att-grade-pill');
                 if (gPill) {
@@ -1963,6 +2007,7 @@ async function submitEditAttForm(e) {
                 if (stTxt) stTxt.textContent = rec.status;
             }
             closeEditAttModal();
+            applyAttendanceFilters();
             showAttAlert(data.message, 'success');
         } else {
             showAttAlert(data.message || 'Could not update record.', 'error');
@@ -2080,5 +2125,7 @@ window.addEventListener('DOMContentLoaded', () => {
 });
 </script>
 
+<script type="application/json" id="student-sections-data"><?= json_encode((object)$studentSectionsByGrade, JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) ?></script>
+<script src="../assets/js/student-sections.js"></script>
 </body>
 </html>

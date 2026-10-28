@@ -2,10 +2,14 @@
 // professor/manual_attendance.php
 require_once __DIR__ . '/../config/database.php';
 require_once __DIR__ . '/../config/auth_check.php';
+require_once __DIR__ . '/../config/student_sections.php';
 
 require_auth(['professor', 'admin']);
 $user = current_user();
 $pdo = get_db_connection();
+$accountStmt = $pdo->prepare('SELECT id, name, email, identifier FROM users WHERE id = ?');
+$accountStmt->execute([$user['id']]);
+$teacherAccount = $accountStmt->fetch(PDO::FETCH_ASSOC) ?: $user;
 $prof_id = $user['id'];
 
 // Get all subjects for this professor
@@ -15,6 +19,46 @@ $subjects = $stmt->fetchAll();
 
 $selected_subject_id = intval($_GET['subject_id'] ?? ($subjects[0]['id'] ?? 0));
 $selected_date       = trim($_GET['date'] ?? date('Y-m-d'));
+$requested_section   = is_string($_GET['section'] ?? null) ? trim($_GET['section']) : '';
+$selected_section    = $requested_section;
+$_SESSION['manual_attendance_csrf'] ??= bin2hex(random_bytes(32));
+if (!in_array($selected_subject_id, array_map('intval', array_column($subjects, 'id')), true)) {
+    $selected_subject_id = 0;
+}
+
+// Fetch active subject details and schedule
+$subjectInfo = null;
+if ($selected_subject_id > 0) {
+    $sInfoStmt = $pdo->prepare("
+        SELECT s.*, sc.day_of_week, sc.start_time, sc.end_time, sc.late_threshold_mins 
+        FROM subjects s 
+        LEFT JOIN schedules sc ON s.id = sc.subject_id 
+        WHERE s.id = ? AND s.professor_id = ?
+    ");
+    $sInfoStmt->execute([$selected_subject_id, $prof_id]);
+    $subjectInfo = $sInfoStmt->fetch();
+}
+
+// Show catalog sections and enrolled sections for the selected subject.
+$sectionOptions = [];
+if ($subjectInfo) {
+    $sectionsStmt = $pdo->prepare("SELECT DISTINCT u.course_section FROM student_subjects ss JOIN users u ON u.id = ss.student_id WHERE ss.subject_id = ? AND u.role = 'student' AND u.course_section IS NOT NULL AND u.course_section <> '' ORDER BY u.course_section");
+    $sectionsStmt->execute([$selected_subject_id]);
+    $sectionOptions = $sectionsStmt->fetchAll(PDO::FETCH_COLUMN);
+    $gradeStmt = $pdo->prepare('SELECT grade_name FROM grade_levels WHERE id = ?');
+    $gradeStmt->execute([$subjectInfo['grade_level_id']]);
+    $gradeName = $gradeStmt->fetchColumn();
+    $catalog = get_student_sections_by_grade($pdo);
+    $sectionOptions = array_values(array_unique(array_merge($sectionOptions, $catalog[$gradeName] ?? [])));
+}
+$sectionOptions = array_values(array_filter($sectionOptions, static fn($section) => trim($section) !== '' && $section !== 'ALL'));
+sort($sectionOptions, SORT_NATURAL);
+if ($selected_section === '' || $selected_section === 'ALL') {
+    $selected_section = $sectionOptions[0] ?? '';
+} elseif (!in_array($selected_section, $sectionOptions, true)) {
+    $selected_section = '';
+}
+$sectionQuery = '&amp;section=' . urlencode($selected_section);
 
 $error = '';
 $success = '';
@@ -26,10 +70,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $status     = trim($_POST['status'] ?? 'Present');
     $time_in    = date('H:i:s');
 
-    if ($action === 'enroll_and_mark') {
+    if (!hash_equals($_SESSION['manual_attendance_csrf'], (string)($_POST['csrf'] ?? ''))) {
+        $error = 'Your form expired. Refresh the page and try again.';
+    } elseif ($selected_section === '' || $requested_section !== $selected_section) {
+        $error = 'Choose a specific section before adding or marking a student.';
+    } elseif ($selected_subject_id <= 0 || !in_array($status, ['Present', 'Late', 'Absent', 'Excused'], true)) {
+        $error = 'Choose one of your subjects and a valid attendance status.';
+    } elseif ($action === 'enroll_and_mark') {
         $student_identifier = trim($_POST['student_identifier'] ?? '');
-        $findStmt = $pdo->prepare("SELECT id FROM users WHERE (identifier = :identifier OR email = :email) AND role = 'student' LIMIT 1");
-        $findStmt->execute([':identifier' => $student_identifier, ':email' => $student_identifier]);
+        $findStmt = $pdo->prepare("SELECT id FROM users WHERE (identifier = :identifier OR email = :email) AND role = 'student' AND course_section = :section LIMIT 1");
+        $findStmt->execute([':identifier' => $student_identifier, ':email' => $student_identifier, ':section' => $selected_section]);
         $foundStu = $findStmt->fetch();
 
         if ($foundStu) {
@@ -38,54 +88,42 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $pdo->prepare("
                 INSERT INTO attendance (student_id, subject_id, date, time_in, status, scanned_by)
                 VALUES (?, ?, ?, ?, ?, ?)
-                ON DUPLICATE KEY UPDATE status = VALUES(status), time_in = VALUES(time_in)
+                ON DUPLICATE KEY UPDATE status = VALUES(status), time_in = COALESCE(time_in, VALUES(time_in))
             ")->execute([$student_id, $selected_subject_id, $selected_date, $time_in, $status, $prof_id]);
             $success = "Student enrolled and marked as $status!";
         } else {
-            $error = "Student ID/Email not found.";
+            $error = "Student ID/Email not found in the selected section.";
         }
     }
 }
 
-// Fetch active subject details and schedule
-$subjectInfo = null;
-if ($selected_subject_id > 0) {
-    $sInfoStmt = $pdo->prepare("
-        SELECT s.*, sc.day_of_week, sc.start_time, sc.end_time, sc.late_threshold_mins 
-        FROM subjects s 
-        LEFT JOIN schedules sc ON s.id = sc.subject_id 
-        WHERE s.id = ?
-    ");
-    $sInfoStmt->execute([$selected_subject_id]);
-    $subjectInfo = $sInfoStmt->fetch();
-}
-
 // Fetch enrolled students for this subject along with their attendance for $selected_date
 $students = [];
-if ($selected_subject_id > 0) {
+if ($selected_subject_id > 0 && $selected_section !== '') {
     $rosterStmt = $pdo->prepare("
         SELECT u.id as student_id, u.identifier, u.name, u.course_section, u.email,
                a.id as attendance_id, a.time_in, a.status as attendance_status, a.date as attendance_date
         FROM student_subjects ss
         JOIN users u ON ss.student_id = u.id
         LEFT JOIN attendance a ON a.student_id = u.id AND a.subject_id = ? AND a.date = ?
-        WHERE ss.subject_id = ?
+        WHERE ss.subject_id = ? AND u.role = 'student'
+          AND u.course_section = ?
         ORDER BY u.name ASC
     ");
-    $rosterStmt->execute([$selected_subject_id, $selected_date, $selected_subject_id]);
+    $rosterStmt->execute([$selected_subject_id, $selected_date, $selected_subject_id, $selected_section]);
     $students = $rosterStmt->fetchAll();
 }
 
 // Fetch all other students not yet enrolled in this subject (for quick enrollment dropdown)
 $otherStudents = [];
-if ($selected_subject_id > 0) {
+if ($selected_subject_id > 0 && $selected_section !== '') {
     $otherStmt = $pdo->prepare("
         SELECT id, identifier, name, course_section FROM users 
-        WHERE role = 'student' 
+        WHERE role = 'student' AND course_section = ?
           AND id NOT IN (SELECT student_id FROM student_subjects WHERE subject_id = ?)
         ORDER BY name ASC
     ");
-    $otherStmt->execute([$selected_subject_id]);
+    $otherStmt->execute([$selected_section, $selected_subject_id]);
     $otherStudents = $otherStmt->fetchAll();
 }
 
@@ -103,8 +141,8 @@ foreach ($students as $st) {
     elseif ($st['attendance_status'] === 'Excused') $excusedCount++;
     else $unmarkedCount++;
 }
-$profDisplayName = preg_replace('/^Prof\.?\s+/i', 'Teacher ', trim($user['name'] ?? 'Teacher'));
-$profParts = preg_split('/\s+/', trim(str_replace(['Teacher', 'Prof.', 'Mr.', 'Ms.', 'Mrs.', "Ma'am", 'Sir'], '', $profDisplayName)));
+$profDisplayName = professor_display_name($teacherAccount['name'] ?? null);
+$profParts = preg_split('/\s+/', $profDisplayName);
 $profParts = array_values(array_filter($profParts));
 $profInitials = count($profParts) >= 2
     ? strtoupper(substr($profParts[0], 0, 1) . substr($profParts[1], 0, 1))
@@ -496,6 +534,7 @@ $profInitials = count($profParts) >= 2
             .sidebar { width: 100% !important; min-width: 100% !important; max-width: 100% !important; position: relative; height: auto; }
         }
     </style>
+    <link rel="stylesheet" href="../assets/css/teacher-account.css">
 </head>
 <body>
 
@@ -511,11 +550,11 @@ $profInitials = count($profParts) >= 2
 
         <div class="nav-section-title">Workspace</div>
         <nav class="sidebar-nav">
-            <a href="dashboard.php?subject_id=<?= $selected_subject_id ?>&date=<?= urlencode($selected_date) ?>" class="nav-link">
+            <a href="dashboard.php?subject_id=<?= $selected_subject_id ?>&amp;date=<?= urlencode($selected_date) ?><?= $sectionQuery ?>" class="nav-link">
                 <i class="fa-solid fa-qrcode"></i>
                 <span>Dashboard &amp; QR Code</span>
             </a>
-            <a href="manual_attendance.php?subject_id=<?= $selected_subject_id ?>&date=<?= $selected_date ?>" class="nav-link active">
+            <a href="manual_attendance.php?subject_id=<?= $selected_subject_id ?>&amp;date=<?= urlencode($selected_date) ?><?= $sectionQuery ?>" class="nav-link active">
                 <i class="fa-solid fa-clipboard-user"></i>
                 <span>Student Attendance</span>
             </a>
@@ -527,14 +566,14 @@ $profInitials = count($profParts) >= 2
                 <i class="fa-solid fa-chart-line"></i>
                 <span>Attendance Reports</span>
             </a>
+            <a href="profile.php" class="nav-link">
+                <i class="fa-solid fa-user-gear"></i>
+                <span>Profile</span>
+            </a>
         </nav>
 
         <div class="sidebar-footer">
-            <div class="prof-card">
-                <small>Teacher Account</small>
-                <strong><?= htmlspecialchars($profDisplayName) ?></strong>
-                <div style="font-size:0.76rem;color:rgba(255,255,255,0.72);margin-top:3px;">ID: <?= htmlspecialchars($user['identifier']) ?></div>
-            </div>
+            <?php require __DIR__ . '/../views/teacher_account_card.php'; ?>
         </div>
     </aside>
 
@@ -549,13 +588,7 @@ $profInitials = count($profParts) >= 2
                     <i class="fa-solid fa-right-from-bracket"></i>
                     <span>Logout</span>
                 </a>
-                <div class="profile-pill">
-                    <div class="avatar-circle"><?= htmlspecialchars($profInitials) ?></div>
-                    <div class="profile-meta">
-                        <strong><?= htmlspecialchars($profDisplayName) ?></strong>
-                        <small>Teacher / Faculty</small>
-                    </div>
-                </div>
+                <?php require __DIR__ . '/../views/teacher_header_profile.php'; ?>
             </div>
         </header>
 
@@ -587,10 +620,10 @@ $profInitials = count($profParts) >= 2
                         </p>
                     </div>
                     <div style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
-                        <button type="button" onclick="markAllEnrolledPresent()" class="btn btn-success">
-                            <i class="fa-solid fa-check-double"></i> Mark All Present Today
+                        <button type="button" onclick="markAllEnrolledPresent()" class="btn btn-success" <?= $selected_section === '' ? 'disabled' : '' ?>>
+                            <i class="fa-solid fa-check-double"></i> Mark Selected Section Present
                         </button>
-                        <a href="dashboard.php?subject_id=<?= $selected_subject_id ?>&date=<?= urlencode($selected_date) ?>" class="btn btn-primary">
+                        <a href="dashboard.php?subject_id=<?= $selected_subject_id ?>&amp;date=<?= urlencode($selected_date) ?><?= $sectionQuery ?>" class="btn btn-primary">
                             <i class="fa-solid fa-qrcode"></i> Show Attendance QR Code
                         </a>
                     </div>
@@ -602,7 +635,7 @@ $profInitials = count($profParts) >= 2
                         <label style="display:block;font-size:0.78rem;font-weight:700;color:var(--ink-muted);margin-bottom:5px;" for="subject_id">
                             <i class="fa-solid fa-book"></i> Subject / Class:
                         </label>
-                        <select id="subject_id" name="subject_id" class="form-control" style="width:100%;" onchange="this.form.submit()">
+                        <select id="subject_id" name="subject_id" class="form-control" style="width:100%;" onchange="this.form.elements.section.value='';this.form.submit()">
                             <?php if (empty($subjects)): ?>
                                 <option value="0">No subjects available</option>
                             <?php else: ?>
@@ -612,6 +645,16 @@ $profInitials = count($profParts) >= 2
                                     </option>
                                 <?php endforeach; ?>
                             <?php endif; ?>
+                        </select>
+                    </div>
+
+                    <div style="flex:1;min-width:200px;">
+                        <label for="section" style="display:block;font-size:0.78rem;font-weight:700;color:var(--ink-muted);margin-bottom:5px;">Section:</label>
+                        <select id="section" name="section" class="form-control" style="width:100%;" onchange="this.form.submit()">
+                            <?php if ($selected_section === ''): ?><option value="" selected disabled><?= $sectionOptions ? 'Choose a section' : 'No sections available' ?></option><?php endif; ?>
+                            <?php foreach ($sectionOptions as $section): ?>
+                                <option value="<?= htmlspecialchars($section, ENT_QUOTES) ?>" <?= $selected_section === $section ? 'selected' : '' ?>><?= htmlspecialchars($section) ?></option>
+                            <?php endforeach; ?>
                         </select>
                     </div>
 
@@ -635,7 +678,7 @@ $profInitials = count($profParts) >= 2
         <div class="card-header" style="flex-wrap: wrap; gap: 0.75rem;">
             <div class="card-title">
                 <i class="fa-solid fa-list-ol" style="color: var(--secondary);"></i> 
-                Class Roster (<?= count($students) ?> Enrolled Students)
+                Class Roster (<?= count($students) ?> Enrolled Students) &middot; <?= htmlspecialchars($selected_section !== '' ? $selected_section : 'No section selected') ?>
             </div>
             
             <div style="display: flex; gap: 0.75rem; align-items: center; flex-wrap: wrap;">
@@ -651,15 +694,16 @@ $profInitials = count($profParts) >= 2
         <!-- Add Student Drawer -->
         <?php if (!empty($otherStudents)): ?>
             <div id="addStudentBox" style="display: none; padding: 1.1rem; background: #f4f9f7; border: 1px solid var(--card-border); border-radius: 14px; margin-bottom: 1.25rem;">
-                <form action="manual_attendance.php?subject_id=<?= $selected_subject_id ?>&date=<?= $selected_date ?>" method="POST" style="display: flex; gap: 0.75rem; flex-wrap: wrap; align-items: flex-end;">
+                <form action="manual_attendance.php?subject_id=<?= $selected_subject_id ?>&amp;date=<?= urlencode($selected_date) ?><?= $sectionQuery ?>" method="POST" style="display: flex; gap: 0.75rem; flex-wrap: wrap; align-items: flex-end;">
                     <input type="hidden" name="action" value="enroll_and_mark">
+                    <input type="hidden" name="csrf" value="<?= htmlspecialchars($_SESSION['manual_attendance_csrf'], ENT_QUOTES) ?>">
                     <div style="flex: 1; min-width: 250px;">
                         <label class="form-label" style="font-size:0.78rem;font-weight:700;color:var(--ink-muted);margin-bottom:6px;display:block;">Select Registered Student to Add to this Class:</label>
                         <select name="student_identifier" class="form-control" style="width:100%;" required>
                             <option value="">-- Choose Student --</option>
                             <?php foreach ($otherStudents as $os): ?>
                                 <option value="<?= htmlspecialchars($os['identifier']) ?>">
-                                    <?= htmlspecialchars($os['name']) ?> (<?= htmlspecialchars($os['identifier']) ?> - <?= htmlspecialchars($os['course_section'] ?? 'Section A - Bonifacio') ?>)
+                                    <?= htmlspecialchars($os['name']) ?> (<?= htmlspecialchars($os['identifier']) ?> - <?= htmlspecialchars($os['course_section'] ?? 'No section assigned') ?>)
                                 </option>
                             <?php endforeach; ?>
                         </select>
@@ -733,6 +777,8 @@ $profInitials = count($profParts) >= 2
 </div>
 
 <script>
+    const currentSection = <?= json_encode($selected_section) ?>;
+    const attendanceCsrf = <?= json_encode($_SESSION['manual_attendance_csrf']) ?>;
     const currentSubjectId = <?= (int)$selected_subject_id ?>;
     const currentDate = "<?= addslashes($selected_date) ?>";
 
@@ -779,11 +825,14 @@ $profInitials = count($profParts) >= 2
     }
 
     function updateStudentAttendance(studentId, status) {
+        if (!currentSection) return;
         fetch('../api/manual_attendance.php', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 action: 'set_status',
+                section: currentSection,
+                csrf: attendanceCsrf,
                 subject_id: currentSubjectId,
                 student_id: studentId,
                 date: currentDate,
@@ -817,6 +866,7 @@ $profInitials = count($profParts) >= 2
     }
 
     function clearStudentAttendance(studentId) {
+        if (!currentSection) return;
         if (!confirm("Clear attendance record for this student on this date?")) return;
 
         fetch('../api/manual_attendance.php', {
@@ -824,6 +874,8 @@ $profInitials = count($profParts) >= 2
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 action: 'clear_record',
+                section: currentSection,
+                csrf: attendanceCsrf,
                 subject_id: currentSubjectId,
                 student_id: studentId,
                 date: currentDate
@@ -842,13 +894,16 @@ $profInitials = count($profParts) >= 2
     }
 
     function markAllEnrolledPresent() {
-        if (!confirm(`Mark all enrolled students as Present for date ${currentDate}?`)) return;
+        if (!currentSection) return;
+        if (!confirm(`Mark all students in ${currentSection} as Present for ${currentDate}?`)) return;
 
         fetch('../api/manual_attendance.php', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 action: 'mark_all_present',
+                section: currentSection,
+                csrf: attendanceCsrf,
                 subject_id: currentSubjectId,
                 date: currentDate
             })
@@ -861,8 +916,10 @@ $profInitials = count($profParts) >= 2
                 setTimeout(() => {
                     window.location.reload();
                 }, 800);
+            } else {
+                showToast(data.message || 'Could not mark attendance.', 'danger');
             }
-        });
+        }).catch(() => showToast('Server error while saving attendance.', 'danger'));
     }
 </script>
 

@@ -2,6 +2,9 @@
 // register.php
 require_once __DIR__ . '/config/database.php';
 require_once __DIR__ . '/config/auth_check.php';
+require_once __DIR__ . '/config/student_sections.php';
+require_once __DIR__ . '/config/student_account.php';
+$studentSectionsByGrade = get_student_sections_by_grade(get_db_connection());
 
 $error = '';
 $success = '';
@@ -10,15 +13,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $identifier     = trim($_POST['identifier'] ?? '');
     $name           = trim($_POST['name'] ?? '');
     $email          = trim($_POST['email'] ?? '');
-    $password       = trim($_POST['password'] ?? '');
+    $password       = STUDENT_DEFAULT_PASSWORD;
     $course_section = trim($_POST['course_section'] ?? '');
+    $grade_level = trim($_POST['grade_level'] ?? '');
 
     if (empty($identifier) || empty($name) || empty($email) || empty($password)) {
         $error = "Please fill in all required fields.";
-    } elseif (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
+    } elseif (student_account_credentials_error($email) !== null) {
         $error = "Please enter a valid email address.";
-    } elseif (strlen($password) < 6) {
-        $error = "Password must be at least 6 characters long.";
+    } elseif (!is_valid_student_section($studentSectionsByGrade, $grade_level, $course_section)) {
+        $error = 'Choose a section that belongs to the selected grade level.';
+
     } else {
         try {
             $pdo = get_db_connection();
@@ -34,21 +39,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $hashed_password = password_hash($password, PASSWORD_BCRYPT);
 
                 // Insert student
-                $insertStmt = $pdo->prepare("INSERT INTO users (identifier, name, email, password, role, course_section, qr_token) 
-                                            VALUES (:identifier, :name, :email, :password, 'student', :course_section, :qr_token)");
+                $insertStmt = $pdo->prepare("INSERT INTO users (identifier, name, email, password, role, course_section, grade_level, qr_token) 
+                                            VALUES (:identifier, :name, :email, :password, 'student', :course_section, :grade_level, :qr_token)");
                 $insertStmt->execute([
                     ':identifier'     => $identifier,
                     ':name'           => $name,
                     ':email'          => $email,
                     ':password'       => $hashed_password,
                     ':course_section' => $course_section,
+                    ':grade_level' => $grade_level,
                     ':qr_token'       => $qr_token
                 ]);
 
                 $new_student_id = $pdo->lastInsertId();
 
-                // Auto-enroll to available subjects for quick testing
-                $subjectsStmt = $pdo->query("SELECT id FROM subjects");
+                // Enroll in subjects for the selected grade level.
+                $subjectsStmt = $pdo->prepare('SELECT s.id FROM subjects s JOIN grade_levels gl ON gl.id = s.grade_level_id WHERE gl.grade_name = ?');
+                $subjectsStmt->execute([$grade_level]);
                 $subjects = $subjectsStmt->fetchAll();
                 if (!empty($subjects)) {
                     $enrollStmt = $pdo->prepare("INSERT IGNORE INTO student_subjects (student_id, subject_id) VALUES (?, ?)");
@@ -56,6 +63,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         $enrollStmt->execute([$new_student_id, $s['id']]);
                     }
                 }
+
+                $notification = student_account_notification($email, $name);
+                $_SESSION['registration_notice'] = $notification['message'];
 
                 header("Location: " . base_url('login.php?registered=1'));
                 exit;
@@ -123,20 +133,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             </div>
 
             <div class="form-group">
-                <label class="form-label" for="course_section">
-                    <i class="fa-solid fa-graduation-cap"></i> Grade &amp; Section
-                </label>
-                <input type="text" id="course_section" name="course_section" class="form-control" 
-                       placeholder="e.g. Section A - Bonifacio" 
-                       value="<?= isset($_POST['course_section']) ? htmlspecialchars($_POST['course_section']) : '' ?>">
+                <label class="form-label" for="register_grade">Grade Level *</label>
+                <select id="register_grade" name="grade_level" class="form-control" required data-student-grade>
+                    <option value="">Choose a grade level</option>
+                    <?php foreach ($studentSectionsByGrade as $grade => $sections): ?><option value="<?= htmlspecialchars($grade, ENT_QUOTES, 'UTF-8') ?>"><?= htmlspecialchars($grade) ?></option><?php endforeach; ?>
+                </select>
+            </div>
+            <div class="form-group">
+                <label class="form-label" for="course_section">Section *</label>
+                <select id="course_section" name="course_section" class="form-control" required data-student-section></select>
             </div>
 
             <div class="form-group">
-                <label class="form-label" for="password">
-                    <i class="fa-solid fa-lock"></i> Password *
-                </label>
-                <input type="password" id="password" name="password" class="form-control" 
-                       placeholder="At least 6 characters" required>
+                <p>Default password: <strong><?= htmlspecialchars(STUDENT_DEFAULT_PASSWORD) ?></strong></p>
+                <small>Your website link, email, and default password will be emailed to you. You may change your password anytime in Profile.</small>
             </div>
 
             <button type="submit" class="btn btn-primary btn-block" style="margin-top: 1.5rem;">
@@ -150,5 +160,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     </div>
 </div>
 
+<script type="application/json" id="student-sections-data"><?= json_encode((object)$studentSectionsByGrade, JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) ?></script>
+<script src="assets/js/student-sections.js"></script>
 </body>
 </html>
